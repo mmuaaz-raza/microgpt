@@ -40,6 +40,14 @@ def get_target_labels(block_size,data,batch_size):
 
 
 
+def softmax(x):
+    return np.exp(x)/np.sum(np.exp(x),axis=1,keepdims=True)
+
+def layer_norm_cal(x,epsilon):
+    mean = np.mean(x,axis=1,keepdims=True)
+    var = np.var(x,axis=1,keepdims=True)
+    return (x-mean)/(var-epsilon)**0.5
+
 
 
 
