@@ -46,14 +46,16 @@ def softmax(x):
 def layer_norm_cal(x,epsilon):
     mean = np.mean(x,axis=1,keepdims=True)
     var = np.var(x,axis=1,keepdims=True)
-    return (x-mean)/(var-epsilon)**0.5
+    return (x-mean)/(var+epsilon)**0.5
 
 
 
 
 
-
-
+def relu(x):
+    return np.maximum(0,x)
+def drelu(x):
+    return x > 0
 
 
 
