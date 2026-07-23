@@ -26,14 +26,20 @@ class Transformer():
         self.params["attention"]["Wq"] = rng.standard_normal((layers,heads,embedding_d, self.dimensions["qk_d"])) * (1 / embedding_d**0.5) 
         self.params["attention"]["Wk"] = rng.standard_normal((layers,heads,embedding_d, self.dimensions["qk_d"])) * (1 / embedding_d**0.5)
         self.params["attention"]["Wv"] = rng.standard_normal((layers,heads,embedding_d, self.dimensions["v_d"])) * (1 / embedding_d**0.5)
-    def forward(self,x,layer):
-    # coverting tokens to embedding vectors
+
+    def forward(self,x,layer): 
+        # coverting tokens to embedding vectors
         input = np.stack([self.params["token_embedding_table"][xi] for xi in x]) # dim(input) = number of tokens in input * embedding_dimension
+        # add absolute fixed positional encoding
+        input = input + self.positional_encoding(input)
+        # apply layer norm
+        normx = layer_norm_cal(input,self.params["attention"]["epsilon"][layer]) * self.params["attention"]["gama"][layer] + self.params["attention"]["beta"][layer]
         attentions_blocks = []
+        # run attention layer heads on norm x
         for i in range(heads) :
-            Q = input @ self.params["attention"]["Wq"][layer][i]
-            K = input @ self.params["attention"]["Wk"][layer][i]
-            V = input @ self.params["attention"]["Wv"][layer][i]
+            Q = normx @ self.params["attention"]["Wq"][layer][i]
+            K = normx @ self.params["attention"]["Wk"][layer][i]
+            V = normx @ self.params["attention"]["Wv"][layer][i]
 
             Qk = Q @ K.T
             Qk /= (self.dimensions["qk_d"])**0.5
@@ -44,26 +50,25 @@ class Transformer():
             Attention = softmax(Qk) @ V 
             attentions_blocks.append(Attention)
 
-        attentions = np.concatenate(attentions_blocks,axis=1)    
+        attentions = np.concatenate(attentions_blocks,axis=-1)    
         final = attentions @ self.params["attention"]["Wp"][layer]
-        input += final 
-        return layer_norm_cal(input,self.params["attention"]["epsilon"][layer]) * self.params["attention"]["gama"][layer] + self.params["attention"]["beta"][layer]
+
+        # residual connection to initial input
+        return input + final
 
     
     def positional_encoding(self,input): #input(number of token , dimension of embeddings)
-            encoded = np.array(input)
+            d_positions = positions = input.shape[0]
             d_model = input.shape[1]
-            positions = input.shape[0]
-            evens_pos = np.arange(0,d_model,2)
-            odd_pos = np.arange(1,d_model,2)
-            for pos in range(positions):
-                for ei in evens_pos:
-                    encoded[pos][ei] += math.sin(pos/(1e4**(ei/d_model)))
-                for oi in odd_pos:
-                    encoded[pos][oi] += math.cos(pos/(1e4**(oi/d_model)))
-            return encoded
+            encoded = np.zeros((d_positions,d_model))
 
+            divisor =  10000**(np.arange(0,d_model,2)/d_model)
+            positions = np.arange(d_positions)[:,np.newaxis]
+            encoded[:,0::2] = np.sin(positions/divisor)
+            encoded[:,1::2] = np.cos(positions/divisor)
 
+            return encoded + input 
+    
 
 
 
