@@ -1,4 +1,4 @@
 import numpy as np
-arr = np.zeros((0,2))
-arr = np.vstack([arr,np.array([0,3])])
-print(arr)
+
+arr = np.array([[2,3],[4,5],[8,7]])
+print(arr[:,[1,0]])

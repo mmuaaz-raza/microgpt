@@ -4,6 +4,9 @@ from process_data import load_essentials , get_target_labels ,softmax , layer_no
 block_size = 8 
 batch_size = 32
 heads = 4
+
+train_set,test_set,itos,stoi ,encode,decode = load_essentials()
+
 class Transformer():
     def __init__(self,embedding_d,heads,qk_d,v_d,layers,ffn_w_d,nToken) -> None:
         self.params={}
@@ -28,7 +31,7 @@ class Transformer():
         self.params["ffn"]["beta"] = rng.standard_normal((layers,embedding_d))/(embedding_d**0.5)
         self.params["ffn"]["Wi"] = rng.standard_normal((layers, embedding_d,self.dimensions["ffn_w_d"])) * (1 / self.dimensions["embedding_d"]**0.5)
         self.params["ffn"]["Wp"] = rng.standard_normal((layers, self.dimensions["ffn_w_d"],embedding_d)) * (1 / self.dimensions["ffn_w_d"]**0.5)
-        self.params["final"] = {"Wp":rng.standard_normal((embedding_d,len(self.itos))) * (1 / embedding_d**0.5)}
+        self.params["final"] = {"Wu":rng.standard_normal((embedding_d,len(self.itos))) * (1 / embedding_d**0.5)}
 
 
 
@@ -41,8 +44,6 @@ class Transformer():
         return input
 
     def attention(self,x,layer): 
-        # print(x)
-        # coverting tokens to embedding vectors
         # apply layer norm
         normx = layer_norm_cal(x,self.params["attention"]["epsilon"][layer]) * self.params["attention"]["gama"][layer] + self.params["attention"]["beta"][layer]
         attentions_blocks = []
@@ -88,10 +89,12 @@ class Transformer():
         Z1 = A0 @ self.params["ffn"]["Wp"][layer]
         return  Z1 + input
     
-    def final_step (self,input):
-        return softmax(input @ self.params["final"]["Wp"])
+    def final_step (self,H):
+        return softmax(H @ self.params["final"]["Wu"])
+    
     def loss_calculation(self,probs,y):
-        return -np.mean([np.log(probs[i,y[i]]+1e-9) for i in range(len(probs.shape[0]))])
+        return -np.mean([np.log(probs[i,y[i]]+1e-9) for i in range(probs.shape[0])])
+    
     def forward(self,x):
         self.dimensions["nToken"] = len(x)
         oFFn = self.init_step(x)
@@ -100,22 +103,31 @@ class Transformer():
             oFFn = self.feedforwardlayer(oAttention,i)
         return self.final_step(oFFn)        
              
-         
+    def backward(self, probs,y,H):
+        T = probs.shape[0]
+        probs[np.arange(T),y] -= 1
+
+        dLoss = probs * (1/T)  # (T,vocab_size)
+        dWu = H.T @ dLoss 
+        dH = dLoss @ self.params["final"]["Wu"].T
+
+
+
+
+        
 
 
 
 
 
-         
+x,y = get_target_labels(block_size,train_set,batch_size)
+print(x[0],y[0])
 
 
 
 
 tinygpt = Transformer(embedding_d=64,heads=4,layers=2,qk_d=128,v_d=64,nToken=8,ffn_w_d=128)
 input = tinygpt.encode("Whose en")
-output = []
-for i in range(20):
-    output.extend(input)
-    input =input[1:] + [np.argmax(tinygpt.forward(input)[7])]
-
-print(tinygpt.decode(output))
+output = input
+mean_loss= np.mean([tinygpt.loss_calculation(tinygpt.forward(x[i]),y[i]) for i in range(batch_size)])
+print(mean_loss)
