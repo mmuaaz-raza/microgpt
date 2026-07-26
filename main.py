@@ -29,10 +29,15 @@ class Transformer():
         self.params["ffn"]["epsilon"] = rng.random((layers,1))
         self.params["ffn"]["gama"] = rng.standard_normal((layers,embedding_d))/(embedding_d**0.5)
         self.params["ffn"]["beta"] = rng.standard_normal((layers,embedding_d))/(embedding_d**0.5)
-        self.params["ffn"]["Wi"] = rng.standard_normal((layers, embedding_d,self.dimensions["ffn_w_d"])) * (1 / self.dimensions["embedding_d"]**0.5)
-        self.params["ffn"]["Wp"] = rng.standard_normal((layers, self.dimensions["ffn_w_d"],embedding_d)) * (1 / self.dimensions["ffn_w_d"]**0.5)
-        self.params["final"] = {"Wu":rng.standard_normal((embedding_d,len(self.itos))) * (1 / embedding_d**0.5)}
+        self.params["ffn"]["W0"] = rng.standard_normal((layers, embedding_d,self.dimensions["ffn_w_d"])) * (1 / self.dimensions["embedding_d"]**0.5)
+        self.params["ffn"]["W1"] = rng.standard_normal((layers, self.dimensions["ffn_w_d"],embedding_d)) * (1 / self.dimensions["ffn_w_d"]**0.5)
+        self.params["ffn"]["B0"] = rng.standard_normal((layers, 1,self.dimensions["ffn_w_d"])) * (1 / self.dimensions["embedding_d"]**0.5)
+        self.params["ffn"]["B1"] = rng.standard_normal((layers, 1,embedding_d)) * (1 / self.dimensions["ffn_w_d"]**0.5)
 
+        self.params["final"] = {"Wu":rng.standard_normal((embedding_d,len(self.itos))) * (1 / embedding_d**0.5)}
+        self.params["final"]["epsilon"] = rng.random((1))
+        self.params["final"]["gama"] = rng.standard_normal((embedding_d))/(embedding_d**0.5)
+        self.params["final"]["beta"] = rng.standard_normal((embedding_d))/(embedding_d**0.5)
 
 
 
@@ -84,13 +89,16 @@ class Transformer():
 
     def feedforwardlayer(self,input,layer):
         normx = layer_norm_cal(input,self.params["ffn"]["epsilon"][layer]) * self.params["ffn"]["gama"][layer] + self.params["ffn"]["beta"][layer]
-        Z0 = normx @ self.params["ffn"]["Wi"][layer]
+        Z0 = normx @ self.params["ffn"]["W0"][layer] + self.params["ffn"]["B0"][layer]
         A0 = relu(Z0)
-        Z1 = A0 @ self.params["ffn"]["Wp"][layer]
-        return  Z1 + input
+        A1 = A0 @ self.params["ffn"]["W1"][layer] + self.params["ffn"]["B1"][layer]
+        return  A1 + input
     
-    def final_step (self,H):
-        return softmax(H @ self.params["final"]["Wu"])
+    def final_step (self,Xfn):
+        Xlf = layer_norm_cal(Xfn,self.params["final"]["epsilon"]) *   self.params["final"]["gama"] + self.params["final"]["beta"]
+        Xv  = Xlf @ self.params["final"]["Wu"]
+        Xf = softmax(Xv)
+        return Xf
     
     def loss_calculation(self,probs,y):
         return -np.mean([np.log(probs[i,y[i]]+1e-9) for i in range(probs.shape[0])])
