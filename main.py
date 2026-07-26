@@ -8,36 +8,38 @@ heads = 4
 train_set,test_set,itos,stoi ,encode,decode = load_essentials()
 
 class Transformer():
-    def __init__(self,embedding_d,heads,qk_d,v_d,layers,ffn_w_d,nToken) -> None:
+    def __init__(self,ed,heads,qk_d,v_d,layers,ffn_w_d,nToken) -> None:
         self.params={}
-        self.dimensions = {"embedding_d":embedding_d,"qk_d":int(qk_d/heads),"v_d":int(v_d/heads),"p_d":v_d,"ffn_w_d":ffn_w_d,"nToken":nToken,"layers":layers}
+        self.dimensions = {"ed":ed,"qk_d":int(qk_d/heads),"v_d":int(v_d/heads),"p_d":v_d,"ffn_w_d":ffn_w_d,"nToken":nToken,"layers":layers}
         self.train_set,self.test_set ,self.itos,self.stoi,self.encode , self.decode = load_essentials()
         # embedding table of the model (vocabulary size, embedding dimension)
-        self.params["token_embedding_table"] = np.random.randn(len(self.itos),embedding_d) * ( 1 / (embedding_d)**0.5)
+        self.params["token_embedding_table"] = np.random.randn(len(self.itos),ed) * ( 1 / (ed)**0.5)
         rng = np.random.default_rng()
         self.params["attention"] = {}
 
-        self.params["attention"]["Wp"] = rng.standard_normal((layers,self.dimensions["v_d"]*heads, embedding_d)) * (1 / self.dimensions["v_d"]**0.5)
+        self.params["attention"]["Wp"] = rng.standard_normal((layers,self.dimensions["v_d"]*heads, ed)) * (1 / self.dimensions["v_d"]**0.5)
         self.params["attention"]["epsilon"] = rng.random((layers))
-        self.params["attention"]["gama"] = rng.standard_normal((layers,embedding_d))/(embedding_d**0.5)
-        self.params["attention"]["beta"] = rng.standard_normal((layers,embedding_d))/(embedding_d**0.5) #dim = (layers, heads , embedding dimentsion of each token, Qk wieght dimension)
-        self.params["attention"]["Wq"] = rng.standard_normal((layers,heads,embedding_d, self.dimensions["qk_d"])) * (1 / embedding_d**0.5) 
-        self.params["attention"]["Wk"] = rng.standard_normal((layers,heads,embedding_d, self.dimensions["qk_d"])) * (1 / embedding_d**0.5)
-        self.params["attention"]["Wv"] = rng.standard_normal((layers,heads,embedding_d, self.dimensions["v_d"])) * (1 / embedding_d**0.5)
+        self.params["attention"]["gama"] = rng.standard_normal((layers,ed))/(ed**0.5)
+        self.params["attention"]["beta"] = rng.standard_normal((layers,ed))/(ed**0.5) #dim = (layers, heads , embedding dimentsion of each token, Qk wieght dimension)
+        self.params["attention"]["Wq"] = rng.standard_normal((layers,heads,ed, self.dimensions["qk_d"])) * (1 / ed**0.5) 
+        self.params["attention"]["Wk"] = rng.standard_normal((layers,heads,ed, self.dimensions["qk_d"])) * (1 / ed**0.5)
+        self.params["attention"]["Wv"] = rng.standard_normal((layers,heads,ed, self.dimensions["v_d"])) * (1 / ed**0.5)
 
         self.params["ffn"] = {}
         self.params["ffn"]["epsilon"] = rng.random((layers,1))
-        self.params["ffn"]["gama"] = rng.standard_normal((layers,embedding_d))/(embedding_d**0.5)
-        self.params["ffn"]["beta"] = rng.standard_normal((layers,embedding_d))/(embedding_d**0.5)
-        self.params["ffn"]["W0"] = rng.standard_normal((layers, embedding_d,self.dimensions["ffn_w_d"])) * (1 / self.dimensions["embedding_d"]**0.5)
-        self.params["ffn"]["W1"] = rng.standard_normal((layers, self.dimensions["ffn_w_d"],embedding_d)) * (1 / self.dimensions["ffn_w_d"]**0.5)
-        self.params["ffn"]["B0"] = rng.standard_normal((layers, 1,self.dimensions["ffn_w_d"])) * (1 / self.dimensions["embedding_d"]**0.5)
-        self.params["ffn"]["B1"] = rng.standard_normal((layers, 1,embedding_d)) * (1 / self.dimensions["ffn_w_d"]**0.5)
+        self.params["ffn"]["gama"] = rng.standard_normal((layers,ed))/(ed**0.5)
+        self.params["ffn"]["beta"] = rng.standard_normal((layers,ed))/(ed**0.5)
+        self.params["ffn"]["W0"] = rng.standard_normal((layers, ed,self.dimensions["ffn_w_d"])) * (1 / self.dimensions["ed"]**0.5)
+        self.params["ffn"]["W1"] = rng.standard_normal((layers, self.dimensions["ffn_w_d"],ed)) * (1 / self.dimensions["ffn_w_d"]**0.5)
+        self.params["ffn"]["B0"] = rng.standard_normal((layers, 1,self.dimensions["ffn_w_d"])) * (1 / self.dimensions["ed"]**0.5)
+        self.params["ffn"]["B1"] = rng.standard_normal((layers, 1,ed)) * (1 / self.dimensions["ffn_w_d"]**0.5)
 
-        self.params["final"] = {"Wu":rng.standard_normal((embedding_d,len(self.itos))) * (1 / embedding_d**0.5)}
+        self.params["final"] = {"Wu":rng.standard_normal((ed,len(self.itos))) * (1 / ed**0.5)}
         self.params["final"]["epsilon"] = rng.random((1))
-        self.params["final"]["gama"] = rng.standard_normal((embedding_d))/(embedding_d**0.5)
-        self.params["final"]["beta"] = rng.standard_normal((embedding_d))/(embedding_d**0.5)
+        self.params["final"]["gama"] = rng.standard_normal((ed))/(ed**0.5)
+        self.params["final"]["beta"] = rng.standard_normal((ed))/(ed**0.5)
+
+        self.forward_runtime = {}
 
 
 
@@ -50,7 +52,7 @@ class Transformer():
 
     def attention(self,x,layer): 
         # apply layer norm
-        normx = layer_norm_cal(x,self.params["attention"]["epsilon"][layer]) * self.params["attention"]["gama"][layer] + self.params["attention"]["beta"][layer]
+        normx = layer_norm_cal(x,self.params["attention"]["epsilon"][layer])[0] * self.params["attention"]["gama"][layer] + self.params["attention"]["beta"][layer]
         attentions_blocks = []
         # run attention layer heads on norm x
         mask = np.tril(np.ones((block_size)))
@@ -88,17 +90,18 @@ class Transformer():
     
 
     def feedforwardlayer(self,input,layer):
-        normx = layer_norm_cal(input,self.params["ffn"]["epsilon"][layer]) * self.params["ffn"]["gama"][layer] + self.params["ffn"]["beta"][layer]
+        normx = layer_norm_cal(input,self.params["ffn"]["epsilon"][layer])[0] * self.params["ffn"]["gama"][layer] + self.params["ffn"]["beta"][layer]
         Z0 = normx @ self.params["ffn"]["W0"][layer] + self.params["ffn"]["B0"][layer]
         A0 = relu(Z0)
         A1 = A0 @ self.params["ffn"]["W1"][layer] + self.params["ffn"]["B1"][layer]
-        return  A1 + input
+        return  A1 + input 
     
     def final_step (self,Xfn):
-        Xlf = layer_norm_cal(Xfn,self.params["final"]["epsilon"]) *   self.params["final"]["gama"] + self.params["final"]["beta"]
+        X_hat, Xlfm, Xlfv = layer_norm_cal(Xfn,self.params["final"]["epsilon"])
+        Xlf  = X_hat  *   self.params["final"]["gama"] + self.params["final"]["beta"]
         Xv  = Xlf @ self.params["final"]["Wu"]
         Xf = softmax(Xv)
-        return Xf
+        return X_hat , Xlf, Xlfm, Xlfv , Xv , Xf 
     
     def loss_calculation(self,probs,y):
         return -np.mean([np.log(probs[i,y[i]]+1e-9) for i in range(probs.shape[0])])
@@ -109,15 +112,42 @@ class Transformer():
         for i in range(self.dimensions["layers"]):
             oAttention = self.attention(oFFn,i)
             oFFn = self.feedforwardlayer(oAttention,i)
-        return self.final_step(oFFn)        
+        t = self.forward_runtime
+        t["Xfn"] = oFFn
+        t["X_hat"],t["Xlf"],t["Xlfm"],t["Xlfv"],t["Xv"],t["Xf"] = self.final_step(oFFn)
+        return  t["Xf"]
              
-    def backward(self, probs,y,H):
+    def backward(self,x,y):
+        # store all the variables inside this->object variables
+        probs = self.forward(x)
+        t = self.forward_runtime
+
         T = probs.shape[0]
         probs[np.arange(T),y] -= 1
 
-        dLoss = probs * (1/T)  # (T,vocab_size)
-        dWu = H.T @ dLoss 
-        dH = dLoss @ self.params["final"]["Wu"].T
+        dXv = probs * (1/T)  # (T,vocab_size)
+        dWu = t["Xlf"].T @ dXv # (ed,vocab_size)
+
+        dXlf = dXv @ self.params["final"]["Wu"].T # (T,ed)
+        dγf = np.sum(dXlf * t["X_hat"],axis=0)
+        dβf = np.sum(dXlf ,axis=0)
+        dX_hat = dXlf * self.params["final"]["gama"]
+
+        # d= derivative , m = mean , f= final layer norm
+        dXhat_dmf = -1/((t["Xlfv"]+self.params["final"]["epsilon"])**0.5) # m = mean
+        dmf = dX_hat * dXhat_dmf
+        dXhat_dvf = -1/2 * (t["Xfn"]-t["Xlfm"])/((t["Xlfv"]+self.params["final"]["epsilon"])**3/2) # v = variance
+        dvf = dX_hat * dXhat_dvf
+        dXhat_dXfn = -dXhat_dmf
+        dm_dXfn = 1/(self.dimensions["ed"])
+        dv_dXfn = 2/(self.dimensions["ed"]) * (t["Xfn"]-t["Xlfm"])
+
+        dXhat_dv = -1/2 * (t["Xfn"]-t["Xlfm"])/((t["Xlfv"]+self.params["final"]["epsilon"])**3/2) # v = variance
+
+        dXfn = dX_hat * dXhat_dXfn + dmf * dm_dXfn + dvf * dv_dXfn
+
+        
+
 
 
 
@@ -129,13 +159,10 @@ class Transformer():
 
 
 x,y = get_target_labels(block_size,train_set,batch_size)
-print(x[0],y[0])
 
 
+tinygpt = Transformer(ed=64,heads=4,layers=2,qk_d=128,v_d=64,nToken=8,ffn_w_d=128)
 
-
-tinygpt = Transformer(embedding_d=64,heads=4,layers=2,qk_d=128,v_d=64,nToken=8,ffn_w_d=128)
-input = tinygpt.encode("Whose en")
-output = input
-mean_loss= np.mean([tinygpt.loss_calculation(tinygpt.forward(x[i]),y[i]) for i in range(batch_size)])
-print(mean_loss)
+input = x[0]
+output = y[0]
+print(tinygpt.backward(input,output))
