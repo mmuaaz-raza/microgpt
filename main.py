@@ -4,7 +4,7 @@ from process_data import load_essentials , get_target_labels ,softmax , layer_no
 block_size = 8 
 batch_size = 32
 heads = 4
-
+alpha = 0.01
 train_set,test_set,itos,stoi ,encode,decode = load_essentials()
 
 class Transformer():
@@ -39,7 +39,8 @@ class Transformer():
         self.params["final"]["gama"] = rng.standard_normal((ed))/(ed**0.5)
         self.params["final"]["beta"] = rng.standard_normal((ed))/(ed**0.5)
 
-        self.forward_runtime = {}
+        t = self.forward_runtime = {}
+        t["ffn"] = {"A0":[],"A1":[],"Z0":[],"Xn2":[],"Xhat":[],"Xlm":[],"Xlv":[]}
 
 
 
@@ -90,18 +91,31 @@ class Transformer():
     
 
     def feedforwardlayer(self,input,layer):
-        normx = layer_norm_cal(input,self.params["ffn"]["epsilon"][layer])[0] * self.params["ffn"]["gama"][layer] + self.params["ffn"]["beta"][layer]
+        Xhat,mean,variance = layer_norm_cal(input,self.params["ffn"]["epsilon"][layer])[0]
+        Xn2 = normx = Xhat  * self.params["ffn"]["gama"][layer] + self.params["ffn"]["beta"][layer]
         Z0 = normx @ self.params["ffn"]["W0"][layer] + self.params["ffn"]["B0"][layer]
         A0 = relu(Z0)
         A1 = A0 @ self.params["ffn"]["W1"][layer] + self.params["ffn"]["B1"][layer]
-        return  A1 + input 
+        t = self.forward_runtime 
+        
+        t["ffn"]["A0"].append(A0);
+        t["ffn"]["A1"].append(A1);
+        t["ffn"]["Z0"].append(Z0);
+        t["ffn"]["Xn2"].append(Xn2);
+        t["ffn"]["Xhat"].append(Xhat);
+        t["ffn"]["Xlm"].append(mean);
+        t["ffn"]["Xlv"].append(variance);
+
+        Xfn = A1 + input 
+        return Xfn
     
     def final_step (self,Xfn):
-        X_hat, Xlfm, Xlfv = layer_norm_cal(Xfn,self.params["final"]["epsilon"])
-        Xlf  = X_hat  *   self.params["final"]["gama"] + self.params["final"]["beta"]
+        Xhat, mean,variance = layer_norm_cal(Xfn,self.params["final"]["epsilon"])
+        Xlm,Xlv = mean,variance
+        Xlf  = Xhat  *   self.params["final"]["gama"] + self.params["final"]["beta"]
         Xv  = Xlf @ self.params["final"]["Wu"]
         Xf = softmax(Xv)
-        return X_hat , Xlf, Xlfm, Xlfv , Xv , Xf 
+        return Xhat , Xlf, Xlm, Xlv , Xv , Xf 
     
     def loss_calculation(self,probs,y):
         return -np.mean([np.log(probs[i,y[i]]+1e-9) for i in range(probs.shape[0])])
@@ -112,9 +126,10 @@ class Transformer():
         for i in range(self.dimensions["layers"]):
             oAttention = self.attention(oFFn,i)
             oFFn = self.feedforwardlayer(oAttention,i)
-        t = self.forward_runtime
+        self.forward_runtime["final"] = {}
+        t = self.forward_runtime["final"]
         t["Xfn"] = oFFn
-        t["X_hat"],t["Xlf"],t["Xlfm"],t["Xlfv"],t["Xv"],t["Xf"] = self.final_step(oFFn)
+        t["Xhat"],t["Xlf"],t["Xlm"],t["Xlv"],t["Xv"],t["Xf"] = self.final_step(oFFn)
         return  t["Xf"]
              
     def backward(self,x,y):
@@ -124,27 +139,89 @@ class Transformer():
 
         T = probs.shape[0]
         probs[np.arange(T),y] -= 1
-
         dXv = probs * (1/T)  # (T,vocab_size)
         dWu = t["Xlf"].T @ dXv # (ed,vocab_size)
 
+        #final layernorm gradients
+
+        self.params["final"]["Wu"] -= alpha *dWu 
+
         dXlf = dXv @ self.params["final"]["Wu"].T # (T,ed)
-        dγf = np.sum(dXlf * t["X_hat"],axis=0)
+        dγf = np.sum(dXlf * t["Xhat"],axis=0)
+
+        self.params["final"]["gama"] -= alpha * dγf
+
         dβf = np.sum(dXlf ,axis=0)
+        self.params["final"]["beta"] -= alpha * dβf
+
         dX_hat = dXlf * self.params["final"]["gama"]
 
         # d= derivative , m = mean , f= final layer norm
-        dXhat_dmf = -1/((t["Xlfv"]+self.params["final"]["epsilon"])**0.5) # m = mean
+        dXhat_dmf = -1/((t["Xlv"]+self.params["final"]["epsilon"])**0.5) # m = mean
         dmf = dX_hat * dXhat_dmf
-        dXhat_dvf = -1/2 * (t["Xfn"]-t["Xlfm"])/((t["Xlfv"]+self.params["final"]["epsilon"])**3/2) # v = variance
+        dXhat_dvf = -1/2 * (t["Xfn"]-t["Xlm"])/((t["Xlv"]+self.params["final"]["epsilon"])**3/2) # v = variance
         dvf = dX_hat * dXhat_dvf
         dXhat_dXfn = -dXhat_dmf
         dm_dXfn = 1/(self.dimensions["ed"])
-        dv_dXfn = 2/(self.dimensions["ed"]) * (t["Xfn"]-t["Xlfm"])
-
-        dXhat_dv = -1/2 * (t["Xfn"]-t["Xlfm"])/((t["Xlfv"]+self.params["final"]["epsilon"])**3/2) # v = variance
+        dv_dXfn = (2/(self.dimensions["ed"])) * (t["Xfn"]-t["Xlm"])
 
         dXfn = dX_hat * dXhat_dXfn + dmf * dm_dXfn + dvf * dv_dXfn
+
+        #! ffn layer
+
+        d0A1ffn = dXfn  #? 0th layer's A1 layer of feed forward network
+        d0Xatffn0 = dXfn #? 0th layer's Xat(original input (residual connection))
+
+        #* ffn layer gradients
+
+        d0A0ffn = d0A1ffn @ self.params["ffn"]["W1"][0].T
+        d0W1ffn = t["ffn"]["A0"][0].T @ d0A1ffn
+        self.params["ffn"]["W1"][0] -= alpha * d0W1ffn
+        d0B1ffn = np.sum(d0A1ffn,axis=0)
+        self.params["ffn"]["B1"][0] -= alpha * d0B1ffn
+
+        d0Z0ffn = drelu(t["ffn"]["Z0"][0]) * d0A0ffn
+        d0W0ffn = t["ffn"]["Xn2"][0].T @ d0Z0ffn
+        self.params["ffn"]["W0"][0] -= alpha * d0W0ffn
+        d0B0ffn =  np.sum(d0Z0ffn,axis=0)
+        self.params["ffn"]["B0"][0] -= alpha * d0B0ffn
+        d0Xn2ffn =  d0Z0ffn @ self.params["ffn"]["W0"][0].T
+
+        #* ffn layer norm gradients
+        
+        
+        d0γffn = np.sum(d0Xn2ffn * t["ffn"]["Xhat"],axis=0)
+        self.params["ffn"]["gama"][0] -= alpha * d0γffn
+        d0βffn = np.sum(d0Xn2ffn,axis=0)
+        self.params["ffn"]["beta"][0]-= alpha * d0βffn
+        
+        d0Xhatffn = d0Xn2ffn * self.params["ffn"]["gama"][0]
+        
+        # d= derivative , m = mean , f= final layer norm
+        d0Xhat_dmfffn = -1/((t["ffn"]["Xlv"][0]+self.params["ffn"]["epsilon"][0])**0.5) # m = mean
+        dmf = d0Xhatffn * d0Xhat_dmfffn
+        d0Xhat_dvfffn = -1/2 * (t["ffn"]["Xn2"][0]-t["ffn"]["Xlm"][0])/((t["ffn"]["Xlv"][0]+self.params["ffn"]["epsilon"][0])**3/2) # v = variance
+        dvf = d0Xhatffn * d0Xhat_dvfffn
+        dXhat_dXfn = -d0Xhat_dmfffn
+        dm_dXfn = 1/(self.dimensions["ed"])
+        dv_dXfn = (2/(self.dimensions["ed"])) * (t["ffn"]["Xn2"][0]-t["ffn"]["Xlm"][0])
+        
+        d0Xatffn1 = d0Xhatffn * dXhat_dXfn + dmf * dm_dXfn + dvf * dv_dXfn
+        d0Xatffn = d0Xatffn1 + d0Xatffn0 # due to residual connection 
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         
 
