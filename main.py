@@ -246,7 +246,8 @@ class Transformer():
         
         d0Xatffn1 = d0Xhatffn * dXhat_dXfn + dmf * dm_dXfn + dvf * dv_dXfn
         d0Xatffn = d0Xatffn1 + d0Xatffn0 # due to residual connection 
-        
+
+                
 
 
 
