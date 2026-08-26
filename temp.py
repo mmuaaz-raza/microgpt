@@ -1,8 +1,7 @@
 import numpy as np
 
-# arr = np.array([[2,3],[4,5],[8,7]])
-positions = np.arange(8)[:,np.newaxis]
-print(positions)
-divisor =  10000**(np.arange(0,128,2)/128)
-print(divisor)
+mask = np.tril(np.ones((3)))
+mask[mask==0] = -np.inf 
+mask[mask==1] = 0 
+print(mask,np.ones((3)))
 # print(np.sum(arr,axis=1))
