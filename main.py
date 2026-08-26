@@ -77,7 +77,7 @@ class Transformer():
         t["ffn"] = {"A0": [], "A1": [], "Z0": [],
                     "Xfn": [], "Xhat": [], "Xlm": [], "Xlv": []}
         t["attention"] = {"V": [[] for _ in range(layers)], "Q": [[] for _ in range(layers)], 
-                          "K": [[] for _ in range(layers)], "Qk": [[] for _ in range(layers)], "att": [[] for _ in range(layers)], "Xhat": [], "Xlm": [], "Xlv": [],"combined_att":[],"Xn1":[]}
+                          "K": [[] for _ in range(layers)], "Qk": [[] for _ in range(layers)], "att": [[] for _ in range(layers)], "Xhat": [], "Xlm": [], "Xlv": [],"combined_att":[],"Xfn":[]}
 
     def init_step(self, x):
         # ? dim(input) = (number of tokens in input (nToken) , embedding_dimension)
@@ -103,7 +103,7 @@ class Transformer():
         t["Xhat"].append(Xhat)
         t["Xlm"].append(mean)
         t["Xlv"].append(variance)
-        t["Xn1"].append(Xn1)
+        t["Xfn"].append(Xn1)
         for i in range(heads):
             # dim(Q,K) : (nToken,qk_d)
             Q = Xn1 @ self.params["attention"]["Wq"][layer][i]
@@ -115,7 +115,7 @@ class Transformer():
             Qk = Q @ K.T
             # ! revision needed
             Qk /= (self.dimensions["qk_d"])**0.5
-            # apply masking to restrict the attention only to previous tokens
+            # apply masking to restrict the attention to only attends to previous tokens
             Qk += mask
 
             att = softmax(Qk)
@@ -239,7 +239,8 @@ class Transformer():
         dv_dXfn = (2/(self.dimensions["ed"])) * (runtimeParams["Xfn"][layerindex]-runtimeParams["Xlm"][layerindex])
         dXfn = dX_hat * dXhat_dXfn + dmf * dm_dXfn + dvf * dv_dXfn
         return dXfn
-
+    def softmaxGrad(self,input,dinput):
+        return  input * (dinput - np.sum(dinput*input,axis=1,keepdims=True))
     def backward(self, x, y):
         Xf = self.forward(x)
 
@@ -266,7 +267,7 @@ class Transformer():
             dA1 = dXfn 
 
             dW1 = t["ffn"]["A0"][layer].T @ dA1
-            dB1 = np.sum(dA1,axis=0)
+            dB1 = np.sum(dA1,axis=0,keepdims=True)
             # print(dA1.shape,self.params["ffn"]["B1"][layer].shape)
             self.params["ffn"]["W1"][layer] -= alpha * dW1
             self.params["ffn"]["B1"][layer] -= alpha * dB1
@@ -275,7 +276,7 @@ class Transformer():
             dZ0 = dA0 * drelu(t["ffn"]["Z0"][layer])
 
             dW0 = t["ffn"]["Xfn"][layer].T @ dZ0
-            dB0 = np.sum(dZ0,axis=0)
+            dB0 = np.sum(dZ0,axis=0,keepdims=True)
             self.params["ffn"]["W0"][layer] -= alpha * dW0
             self.params["ffn"]["B0"][layer] -= alpha * dB0
             
@@ -289,23 +290,35 @@ class Transformer():
             self.params["attention"]["Wp"][layer] -= alpha * dWp
 
             dcombined_att = dprojected_att @ self.params["attention"]["Wp"][layer].T
-            dXn1 = None # to be initialized
+            dXn1 = np.zeros_like(t["attention"]["Xfn"][layer]) # to be initialized
             for head in range(self.dimensions["heads"]):
-                sti = head * self.dimensions["ed"]
-                dattv = dcombined_att[:,sti:sti+self.dimensions["ed"]]
+                sti = head * self.dimensions["v_d"]
+                dattv = dcombined_att[:, sti : sti + self.dimensions["v_d"]]
 
                 dV = t["attention"]["att"][layer][head].T @ dattv
-                datt = dattv @ self.params["attention"]["V"][layer][head].T
+                
+                # print(dattv.shape)
+                datt = dattv @ t["attention"]["V"][layer][head].T
 
-                dWv = t["attention"]["Xn1"][layer].T @ dV
+
+
+                att =t["attention"]["att"][layer][head]
+                dQK = self.softmaxGrad(att,datt)
+
+                dQ = dQK @ t["attention"]["K"][layer][head]
+                dK = dQK.T @ t["attention"]["Q"][layer][head]
+                dWq = t["attention"]["Xfn"][layer].T @ dQ 
+                dWk = t["attention"]["Xfn"][layer].T @ dK 
+                dWv = t["attention"]["Xfn"][layer].T @ dV
+
                 self.params["attention"]["Wv"][layer][head] -= alpha * dWv
+                self.params["attention"]["Wq"][layer][head] -= alpha * dWq
+                self.params["attention"]["Wk"][layer][head] -= alpha * dWk
+                dXn1_ = dV @ self.params["attention"]["Wv"][layer][head].T + dQ @ self.params["attention"]["Wq"][layer][head].T + dK @ self.params["attention"]["Wk"][layer][head].T
+                dXn1+= dXn1_
 
-                if dXn1 is not None:
-                    dXn1 = dXn1 + dV @ self.params["attention"]["Wv"][layer][head].T
-
-                
-                # t["attention"]["combined_att"][layer]
-                
+            dXp = 1*dXat + self.layernormGrad(dXn1,t["attention"],self.params["attention"],layer)
+            
 
 
 
