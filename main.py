@@ -2,7 +2,7 @@ import numpy as np
 from process_data import load_essentials, get_target_labels, softmax, layer_norm_cal, relu, drelu
 
 block_size = 8
-batch_size = 32
+batch_size = 512
 heads = 4
 alpha = 0.01
 epsilon = 1e-7
@@ -78,14 +78,17 @@ class Transformer():
                     "Xfn": [], "Xhat": [], "Xlm": [], "Xlv": []}
         t["attention"] = {"V": [[] for _ in range(layers)], "Q": [[] for _ in range(layers)], 
                           "K": [[] for _ in range(layers)], "Qk": [[] for _ in range(layers)], "att": [[] for _ in range(layers)], "Xhat": [], "Xlm": [], "Xlv": [],"combined_att":[],"Xfn":[]}
+        t["init"] = {"Xp":[]}
 
     def init_step(self, x):
         # ? dim(input) = (number of tokens in input (nToken) , embedding_dimension)
         input = np.stack([self.params["token_embedding_table"][xi]
                          for xi in x])
         # ? add absolute fixed positional encoding
-        input = input + self.positional_encoding(input)
-        return input
+        Xp = input + self.positional_encoding(input)
+        self.forward_runtime["init"]["Xp"] = Xp
+        self.forward_runtime["init"]["x"] = x
+        return Xp
 
     def attention(self, x, layer):  # dim(x) : (nToken,ed)
         # Apply layernorm to input(x)
@@ -261,14 +264,13 @@ class Transformer():
 
         # ? final step layer norm gradient
         dXfn = self.layernormGrad(dXlf,t["final"],self.params["final"],0)
-
+        dXp = np.zeros_like(t["init"]["Xp"])
         for layer in range(self.dimensions["layers"]-1,-1,-1):
             # ffn gradients 
             dA1 = dXfn 
 
             dW1 = t["ffn"]["A0"][layer].T @ dA1
             dB1 = np.sum(dA1,axis=0,keepdims=True)
-            # print(dA1.shape,self.params["ffn"]["B1"][layer].shape)
             self.params["ffn"]["W1"][layer] -= alpha * dW1
             self.params["ffn"]["B1"][layer] -= alpha * dB1
             
@@ -317,7 +319,14 @@ class Transformer():
                 dXn1_ = dV @ self.params["attention"]["Wv"][layer][head].T + dQ @ self.params["attention"]["Wq"][layer][head].T + dK @ self.params["attention"]["Wk"][layer][head].T
                 dXn1+= dXn1_
 
-            dXp = 1*dXat + self.layernormGrad(dXn1,t["attention"],self.params["attention"],layer)
+            dXfn = dXp = 1*dXat + self.layernormGrad(dXn1,t["attention"],self.params["attention"],layer)
+
+        #! init steps Grad
+        dEmbd = np.zeros_like(self.params["token_embedding_table"])
+        np.add.at(dEmbd, self.forward_runtime["init"]["x"], dXp)
+        self.params["token_embedding_table"] -= alpha * dEmbd
+
+
             
 
 
@@ -337,6 +346,11 @@ tinygpt = Transformer(ed=64, heads=4, layers=8, qk_d=128,
 
 input = x[0]
 output = y[0]
+print(tinygpt.loss_calculation(tinygpt.forward(input),output))
 
-print(tinygpt.backward(input,output))
+for input,output in zip(x,y):
+    tinygpt.backward(input,output)
+
+print(tinygpt.loss_calculation(tinygpt.forward(input),output))
+
 # print(tinygpt.backward(input,output))
