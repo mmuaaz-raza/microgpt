@@ -53,13 +53,13 @@ class Transformer():
             (layers, ed))/(ed**0.5)
 
         self.params["ffn"]["W0"] = rng.standard_normal(
-            (layers, ed, self.dimensions["ffn_wd"])) * (1 / self.dimensions["ed"]**0.5)
+            (layers, ed, self.dimensions["ffn_wd"])) * (2 / self.dimensions["ed"]**0.5)
         self.params["ffn"]["B0"] = rng.standard_normal(
-            (layers, 1, self.dimensions["ffn_wd"])) * (1 / self.dimensions["ed"]**0.5)
+            (layers, 1, self.dimensions["ffn_wd"])
         self.params["ffn"]["W1"] = rng.standard_normal(
-            (layers, self.dimensions["ffn_wd"], ed)) * (1 / self.dimensions["ffn_wd"]**0.5)
-        self.params["ffn"]["B1"] = rng.standard_normal(
-            (layers, 1, ed)) * (1 / self.dimensions["ffn_wd"]**0.5)
+            (layers, self.dimensions["ffn_wd"], ed)) * (2 / self.dimensions["ffn_wd"]**0.5)
+        self.params["ffn"]["B1"] = np.zeros(
+            (layers, 1, ed))
 
         #! final block
         self.params["final"] = {}
