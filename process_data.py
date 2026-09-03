@@ -9,18 +9,19 @@ def load_vocabulary(data):
 def load_essentials():
     # wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
     with open("input.txt") as file:
-        data = file.read().splitlines()
-    n = int(0.9*len(data))
+        data = file.read()
+    n = int(0.9*len(list(data)))
     # 90% data ~ trainset 
     train_set = data[:n]
+                    #  n]
     test_set = data[n:]
     # index to string , string to index lookup tables
+    
     itos,stoi = load_vocabulary(data)
-
+  
     # index to string , string to index functions 
     encode = lambda x:[stoi[char] for char in "".join(x)]
     decode = lambda x:"".join([itos[index] for index in x])
-
     # encode the whole data set splits
     return np.array(encode(train_set),dtype=np.long),np.array(encode(test_set),dtype=np.long) ,itos,stoi ,encode,decode
 
@@ -41,7 +42,8 @@ def get_target_labels(block_size,data,batch_size):
 
 
 def softmax(x):
-    return np.exp(x)/np.sum(np.exp(x),axis=1,keepdims=True)
+    x_shifted = x - np.max(x, axis=1, keepdims=True)
+    return np.exp(x_shifted)/(np.sum(np.exp(x_shifted),axis=1,keepdims=True))
 
 def layer_norm_cal(x,epsilon):
     mean = np.mean(x,axis=1,keepdims=True)
@@ -57,5 +59,21 @@ def relu(x):
 def drelu(x):
     return x > 0
 
+import math
 
+def gelu(x):
+    # Standard coefficient: 0.044715
+    inner = ((2 / math.pi) ** 0.5) * (x + 0.044715 * (x ** 3))
+    return 0.5 * x * (1 + math.tanh(inner))
 
+def dgelu(x):
+    inner = ((2 / math.pi) ** 0.5) * (x + 0.044715 * (x ** 3))
+    tanh_inner = math.tanh(inner)
+    
+    sech2_inner = 1 / (math.cosh(inner) ** 2)
+    inner_derivative = ((2 / math.pi) ** 0.5) * (1 + 3 * 0.044715 * (x ** 2))
+    
+    term1 = 0.5 * (1 + tanh_inner)
+    term2 = 0.5 * x * sech2_inner * inner_derivative
+    
+    return term1 + term2
