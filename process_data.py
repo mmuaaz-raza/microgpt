@@ -8,11 +8,11 @@ def load_vocabulary(data):
 
 def load_essentials():
     # wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
-    with open("input.txt") as file:
+    with open("data2.txt") as file:
         data = file.read()
     n = int(0.9*len(list(data)))
     # 90% data ~ trainset 
-    train_set = data[:n]
+    train_set = data[:]
                     #  n]
     test_set = data[n:]
     # index to string , string to index lookup tables
