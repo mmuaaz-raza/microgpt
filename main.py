@@ -3,14 +3,12 @@ import os
 import pickle
 from process_data import load_essentials, get_target_labels, softmax, layer_norm_cal, relu, drelu
 import copy
-block_size = 64
+block_size = 4
 batch_size = 32
-alpha = 0.01
 epsilon = 1e-7
 train_set, test_set, itos, stoi, encode, decode = load_essentials()
 
 # ? ed = embedding dimensions , heads = number of attention head in each attention block , qk_d = query and key dimensions at each attention head , v_d = value dimension for each attention head ,layers = number of attention+ffn blocks in a sequence/stacked manner , ffn_wd = weight matrix dimension at each hidden layer in ffn block , nToken = number of tokens (8 in mycase)
-
 
 class Transformer():
     def __init__(self, ed, heads, qk_d, v_d, layers, ffn_wd, nToken, savedModelFileName=None) -> None:
@@ -276,7 +274,7 @@ class Transformer():
         Xf = self.final_step(oFFn)
         return Xf
 
-    def layernormGrad(self, dXlf, runtimeParams, modelParams, layerindex, batch_size, Gradients):
+    def layernormGrad(self, dXlf, runtimeParams, modelParams, layerindex, batch_size, Gradients,alpha):
 
         dgamaf = np.sum(
             dXlf * runtimeParams["Xhat"][layerindex], axis=0)  # (1,ed)
@@ -304,7 +302,7 @@ class Transformer():
     def softmaxGrad(self, input, dinput):
         return input * (dinput - np.sum(dinput*input, axis=1, keepdims=True))
 
-    def backward(self, x, y, batch_size):
+    def backward(self, x, y, batch_size,alpha):
         Xf = self.forward(x)
         if Xf is None:
             return
@@ -324,7 +322,7 @@ class Transformer():
 
         # ? final step layer norm gradient
         dXfn = self.layernormGrad(dXlf, t["final"], self.params["final"],
-                                  layerindex=0, batch_size=batch_size, Gradients=self.gradients["final"])
+                                  layerindex=0, batch_size=batch_size, Gradients=self.gradients["final"],alpha=alpha)
 
         # default initialization
         dXp = np.zeros_like(t["init"]["Xp"])
@@ -343,7 +341,7 @@ class Transformer():
             dXn2 = dZ0 @ self.params["ffn"]["W0"][layer].T
             dXat = 1*dXfn + self.layernormGrad(dXn2, t["ffn"], self.params["ffn"], layer,
                                                # due to residual connection
-                                               batch_size, Gradients=self.gradients["ffn"])
+                                               batch_size, Gradients=self.gradients["ffn"],alpha=alpha)
 
             self.gradients["ffn"]["W1"][layer] += alpha/batch_size * dW1
             self.gradients["ffn"]["B1"][layer] += alpha/batch_size * dB1
@@ -390,7 +388,7 @@ class Transformer():
                     batch_size * dWk
 
             dXfn = dXp = 1*dXat + self.layernormGrad(
-                dXn1, t["attention"], self.params["attention"], layer, batch_size, self.gradients["attention"])
+                dXn1, t["attention"], self.params["attention"], layer, batch_size, self.gradients["attention"],alpha=alpha)
 
         #! init steps Grad
         dEmbd = np.zeros_like(self.params["w_emd"])
@@ -435,25 +433,29 @@ class Transformer():
                         f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-tinygpt = Transformer(ed=128, heads=4, layers=4, qk_d=64, v_d=64,
-                      nToken=block_size, ffn_wd=4*128, savedModelFileName="shakespare.pkl")
+tinygpt = Transformer(ed=32, heads=6, layers=1, qk_d=16, v_d=16,
+                      nToken=block_size, ffn_wd=4*32, savedModelFileName="toy1.pkl")
 
-iter = 3000
-for i in range(iter):
-    x, y = get_target_labels(batch_size=batch_size,
-                             data=train_set, block_size=block_size)
-    for input, output in zip(x, y):
-        tinygpt.backward(input, output, batch_size)
-    tinygpt.updateWeights()
-    if i% 500 == 0 and i!=0:
-        tinygpt.save("shakespare.pkl")
-    if i % 50 == 0:
-        print(i, "/", iter, " Loss : ", tinygpt.calculateBatchLoss(x, y))
+def train_network(iter,decay_rate,checkpoint_rate,tracking_rate,base_alpha):
+    tracking = int(iter*tracking_rate)
+    checkpoint = int(checkpoint_rate*iter)
+    for i in range(iter):
+        alpha = float(base_alpha/(1+float(decay_rate*i)))
+        x, y = get_target_labels(batch_size=batch_size,data=train_set, block_size=block_size)
+        for input, output in zip(x, y):
+            tinygpt.backward(input, output, batch_size,alpha)
+        tinygpt.updateWeights()
+        if i% checkpoint == 0 and i!=0:
+            tinygpt.save("toy1.pkl")
+        if i % tracking == 0:
+            print(alpha)
+            print(i, "/", iter, " Loss : ", tinygpt.calculateBatchLoss(x, y))
 
+train_network(0,0.0001,0.25,0.01,0.01)
 # predictoin time
-init_input = tinygpt.encode("""Muaaz """)
+init_input = tinygpt.encode("""Muaa""")
 predictions = list(init_input)
-for i in range(60):
+for i in range(400):
     output = tinygpt.forward(init_input)
     if output is None:
         break
@@ -465,7 +467,7 @@ for i in range(60):
     init_input = decodedindices
     predictions.append(maxi)
 
-tinygpt.save("shakespare.pkl")
+tinygpt.save("toy1.pkl")
 text = tinygpt.decode(predictions)
 with open("output.txt", "w", encoding="utf-8") as f:
     f.write(text)
