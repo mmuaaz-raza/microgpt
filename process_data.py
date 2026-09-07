@@ -8,11 +8,11 @@ def load_vocabulary(data):
 
 def load_essentials():
     # wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
-    with open("data2.txt") as file:
+    with open("input.txt") as file:
         data = file.read()
     n = int(0.9*len(list(data)))
     # 90% data ~ trainset 
-    train_set = data[:]
+    train_set = data[:n]
                     #  n]
     test_set = data[n:]
     # index to string , string to index lookup tables
@@ -59,19 +59,19 @@ def relu(x):
 def drelu(x):
     return x > 0
 
-import math
+
 
 def gelu(x):
     # Standard coefficient: 0.044715
-    inner = ((2 / math.pi) ** 0.5) * (x + 0.044715 * (x ** 3))
-    return 0.5 * x * (1 + math.tanh(inner))
+    inner = ((2 / np.pi) ** 0.5) * (x + 0.044715 * (x ** 3))
+    return 0.5 * x * (1 + np.tanh(inner))
 
 def dgelu(x):
-    inner = ((2 / math.pi) ** 0.5) * (x + 0.044715 * (x ** 3))
-    tanh_inner = math.tanh(inner)
+    inner = ((2 / np.pi) ** 0.5) * (x + 0.044715 * (x ** 3))
+    tanh_inner = np.tanh(inner)
     
-    sech2_inner = 1 / (math.cosh(inner) ** 2)
-    inner_derivative = ((2 / math.pi) ** 0.5) * (1 + 3 * 0.044715 * (x ** 2))
+    sech2_inner = 1 / (np.cosh(inner) ** 2)
+    inner_derivative = ((2 / np.pi) ** 0.5) * (1 + 3 * 0.044715 * (x ** 2))
     
     term1 = 0.5 * (1 + tanh_inner)
     term2 = 0.5 * x * sech2_inner * inner_derivative

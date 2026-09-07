@@ -24,8 +24,15 @@ mask = np.tril(np.ones((3)))
 print(np.tril(np.ones((3))))
 
 print("""First Citizen:
-First, you know Caius Marcius is chief enemy to the people.
+Before we proceed any further, hear me speak.
 
 All:
-We know't, we know't."""[:32])
+Speak, speak.
+
+First Citizen:
+You are all resolved rather to die than to famish?
+
+All:
+Resolved. resolved.
+"""[:64])
 # print(np.sum(arr,axis=1))

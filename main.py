@@ -1,20 +1,22 @@
 import numpy as np
 import os
 import pickle
-from process_data import load_essentials, get_target_labels, softmax, layer_norm_cal, relu, drelu
+from process_data import load_essentials, get_target_labels, softmax, layer_norm_cal, gelu, dgelu
 import copy
-block_size = 4
-batch_size = 32
+from param_init import ModelTrainableParams ,ModelDimensions
+block_size = 64
+batch_size = 16
 epsilon = 1e-7
 train_set, test_set, itos, stoi, encode, decode = load_essentials()
 
-# ? ed = embedding dimensions , heads = number of attention head in each attention block , qk_d = query and key dimensions at each attention head , v_d = value dimension for each attention head ,layers = number of attention+ffn blocks in a sequence/stacked manner , ffn_wd = weight matrix dimension at each hidden layer in ffn block , nToken = number of tokens (8 in mycase)
 
+# ? ed = embedding dimensions , heads = number of attention head in each attention block , qk_d = query and key dimensions at each attention head , v_d = value dimension for each attention head ,layers = number of attention+ffn blocks in a sequence/stacked manner , ffn_wd = weight matrix dimension at each hidden layer in ffn block , nToken = number of tokens (8 in mycase)
 class Transformer():
+    params : ModelTrainableParams
+    gradients : ModelTrainableParams
+    dimensions : ModelDimensions
     def __init__(self, ed, heads, qk_d, v_d, layers, ffn_wd, nToken, savedModelFileName=None) -> None:
         isSavedParams = False
-        self.params = {}
-        self.gradients = {}
         self.train_set, self.test_set, self.itos, self.stoi, self.encode, self.decode = load_essentials()
 
         if savedModelFileName and os.path.exists(savedModelFileName):
@@ -26,61 +28,12 @@ class Transformer():
                 isSavedParams = True
 
         if not isSavedParams:
-            self.dimensions = {"ed": ed, "qk_d": int(qk_d/heads), "v_d": int(
-                v_d/heads), "p_d": v_d, "ffn_wd": ffn_wd, "nToken": nToken, "layers": layers, "heads": heads}
-            # ? embedding table of the model (vocabulary size, embedding dimension)
-            self.params["w_emd"] = np.random.randn(
-                len(self.itos), ed) * (1 / (ed)**0.5)
-            rng = np.random.default_rng()
-            #! Attention block
-            self.params["attention"] = {}
-
-            # ? layer norm trainable params
-            self.params["attention"]["gama"] = np.ones((layers, ed))
-            self.params["attention"]["beta"] = np.zeros((layers, ed))
-
-            # ? dimension : Wp=projection weight matrix : (layers,v_d*heads, ed)
-
-            self.params["attention"]["Wp"] = rng.standard_normal(
-                (layers, self.dimensions["v_d"]*heads, ed)) * (1 / self.dimensions["v_d"]**0.5)
-
-            # ? dimension = (layers, heads , embedding dimentsion of each token, Qk/v wieght dimension)
-
-            self.params["attention"]["Wq"] = rng.standard_normal(
-                (layers, heads, ed, self.dimensions["qk_d"])) * (1 / ed**0.5)
-            self.params["attention"]["Wk"] = rng.standard_normal(
-                (layers, heads, ed, self.dimensions["qk_d"])) * (1 / ed**0.5)
-            self.params["attention"]["Wv"] = rng.standard_normal(
-                (layers, heads, ed, self.dimensions["v_d"])) * (1 / ed**0.5)
-
-            #! FFN block
-            self.params["ffn"] = {}
-
-            # ? layer norm trainable params
-            self.params["ffn"]["gama"] = np.ones((layers, ed))
-            self.params["ffn"]["beta"] = np.zeros((layers, ed))
-
-            self.params["ffn"]["W0"] = rng.standard_normal(
-                (layers, ed, self.dimensions["ffn_wd"])) * (2 / self.dimensions["ed"]**0.5)
-            self.params["ffn"]["B0"] = np.zeros(
-                (layers, 1, self.dimensions["ffn_wd"]))
-            self.params["ffn"]["W1"] = rng.standard_normal(
-                (layers, self.dimensions["ffn_wd"], ed)) * (2 / self.dimensions["ffn_wd"]**0.5)
-            self.params["ffn"]["B1"] = np.zeros((layers, 1, ed))
-
-            #! final block
-            self.params["final"] = {}
-
-            # ? Wu = unembedding weight matrix to project (nToken,ed) -> (nToken,len of vaocabulary)
-            self.params["final"]["Wu"] = rng.standard_normal(
-                (ed, len(self.itos))) / ed**0.5
-
-            # ? layer norm trainable params
-            self.params["final"]["gama"] = np.ones((1, ed))
-            self.params["final"]["beta"] = np.zeros((1, ed))
-
+            self.dimensions = ModelDimensions(ed, qk_d, v_d,heads*v_d, ffn_wd, nToken,layers,heads,len(itos))
+            self.params = ModelTrainableParams(self.dimensions)
+         
         # to initialize gradients containers for batch gradient updates
-        self.default_gradients()
+        self.gradients = ModelTrainableParams(self.dimensions,allzero=True)
+        self.gradients.__init__(self.dimensions,allzero=True)
         #! Temporary storage for runtime params in forward Pass
         t = self.forward_runtime = {}
         t["ffn"] = {"A0": [], "A1": [], "Z0": [],
@@ -88,50 +41,10 @@ class Transformer():
         t["attention"] = {"V": [], "Q": [],
                           "K": [], "Qk": [], "att": [], "Xhat": [], "Xlm": [], "Xlv": [], "combined_att": [], "Xfn": [], "input": []}
         t["init"] = {"Xp": [], "input": []}
-
-    def default_gradients(self):
-        ed, layers, heads = self.dimensions["ed"], self.dimensions["layers"], self.dimensions["heads"]
-        self.gradients["w_emd"] = np.zeros((len(self.itos), ed))
-        self.gradients["attention"] = {}
-
-        self.gradients["attention"]["gama"] = np.zeros((layers, ed))
-        self.gradients["attention"]["beta"] = np.zeros((layers, ed))
-
-        self.gradients["attention"]["Wp"] = np.zeros(
-            (layers, self.dimensions["v_d"]*heads, ed))
-
-        self.gradients["attention"]["Wq"] = np.zeros(
-            (layers, heads, ed, self.dimensions["qk_d"]))
-        self.gradients["attention"]["Wk"] = np.zeros(
-            (layers, heads, ed, self.dimensions["qk_d"]))
-        self.gradients["attention"]["Wv"] = np.zeros(
-            (layers, heads, ed, self.dimensions["v_d"]))
-
-        #! FFN block
-        self.gradients["ffn"] = {}
-
-        self.gradients["ffn"]["gama"] = np.zeros((layers, ed))
-        self.gradients["ffn"]["beta"] = np.zeros((layers, ed))
-
-        self.gradients["ffn"]["W0"] = np.zeros(
-            (layers, ed, self.dimensions["ffn_wd"]))
-        self.gradients["ffn"]["B0"] = np.zeros(
-            (layers, 1, self.dimensions["ffn_wd"]))
-        self.gradients["ffn"]["W1"] = np.zeros(
-            (layers, self.dimensions["ffn_wd"], ed))
-        self.gradients["ffn"]["B1"] = np.zeros((layers, 1, ed))
-
-        #! final block
-        self.gradients["final"] = {}
-
-        self.gradients["final"]["Wu"] = np.zeros((ed, len(self.itos)))
-
-        self.gradients["final"]["gama"] = np.zeros((1, ed))
-        self.gradients["final"]["beta"] = np.zeros((1, ed))
-
+# refactor every variable access way to match refactoring
     def init_step(self, x):
         # ? dim(input) = (number of tokens in input (nToken) , embedding_dimension)
-        input = np.stack([self.params["w_emd"][xi]
+        input = np.stack([self.params.w_emb[xi]
                          for xi in x])
         # ? add absolute fixed positional encoding
         Xp = input + self.positional_encoding(input)
@@ -142,8 +55,8 @@ class Transformer():
     def attention(self, x, layer):  # dim(x) : (nToken,ed)
         # Apply layernorm to input(x)
         Xhat, mean, variance = layer_norm_cal(x, epsilon)
-        Xn1 = Xhat * self.params["attention"]["gama"][layer] + \
-            self.params["attention"]["beta"][layer]
+        Xn1 = Xhat * self.params.attention.gama[layer] + \
+            self.params.attention.beta[layer]
 
         # run attention layer heads on norm x
         mask = np.tril(np.ones((x.shape[0])))
@@ -157,13 +70,13 @@ class Transformer():
         t["Xfn"].append(Xn1)
 
         # dim(V) : (head,nToken,qk_d)
-        V = Xn1 @ self.params["attention"]["Wv"][layer]
-        Q = Xn1 @ self.params["attention"]["Wq"][layer]
-        K = Xn1 @ self.params["attention"]["Wk"][layer]
+        V = Xn1 @ self.params.attention.Wv[layer]
+        Q = Xn1 @ self.params.attention.Wq[layer]
+        K = Xn1 @ self.params.attention.Wk[layer]
 
         # dim(QK) : (head,nToken,v_d)
         Qk = Q @ np.transpose(K, axes=(0, 2, 1))
-        Qk /= (self.dimensions["qk_d"])**0.5
+        Qk /= (self.dimensions.qk_d)**0.5
         Qk += mask
         att = softmax(Qk)
         attv = att @ V
@@ -182,7 +95,7 @@ class Transformer():
         t["input"].append(x)
 
         # dim(final) : (nToken,ed)
-        projected_att = attv @ self.params["attention"]["Wp"][layer]
+        projected_att = attv @ self.params.attention.Wp[layer]
 
         # residual connection to initial input (x)
         Xat = x + projected_att
@@ -213,15 +126,15 @@ class Transformer():
         # apply layernorm to x
         # dim(Xn2) = dim(x)
         Xhat, mean, variance = layer_norm_cal(x, epsilon)
-        Xn2 = Xhat * self.params["ffn"]["gama"][layer] + \
-            self.params["ffn"]["beta"][layer]
+        Xn2 = Xhat * self.params.ffn.gama[layer] + \
+            self.params.ffn.beta[layer]
         # dim(Z0)=dim(A0) : (nToken,ffn_wd)
-        Z0 = Xn2  @ self.params["ffn"]["W0"][layer] + \
-            self.params["ffn"]["B0"][layer]
-        A0 = relu(Z0)
+        Z0 = Xn2  @ self.params.ffn.W0[layer] + \
+            self.params.ffn.B0[layer]
+        A0 = gelu(Z0)
         # dim(A1) : (nToken,ed)
-        A1 = A0 @ self.params["ffn"]["W1"][layer] + \
-            self.params["ffn"]["B1"][layer]
+        A1 = A0 @ self.params.ffn.W1[layer] + \
+            self.params.ffn.B1[layer]
 
         # ? setting runtime variables
         t = self.forward_runtime
@@ -243,10 +156,10 @@ class Transformer():
         Xhat, mean, variance = layer_norm_cal(Xfn, epsilon)
         Xlm, Xlv = mean, variance
         # dim(Xlf) :(nToken , ed)
-        Xlf = Xhat * self.params["final"]["gama"] + \
-            self.params["final"]["beta"]
+        Xlf = Xhat * self.params.final.gama + \
+            self.params.final.beta
         # dim(Xv) : (nToken,no. of tokens in vocabulary)
-        Xv = Xlf @ self.params["final"]["Wu"]
+        Xv = Xlf @ self.params.final.Wu
         Xf = softmax(Xv)
 
         # setting runtime variables
@@ -260,12 +173,12 @@ class Transformer():
         return -np.mean([np.log(probs[i, y[i]]+1e-9) for i in range(probs.shape[0])])
 
     def forward(self, x):
-        if len(x) != self.dimensions["nToken"]:
+        if len(x) != self.dimensions.nToken:
             print("Unacceptable number of input tokens")
             exit(501)
             return
         oFFn = self.init_step(x)
-        for i in range(self.dimensions["layers"]):
+        for i in range(self.dimensions.layers):
             oAttention = self.attention(oFFn, i)
             oFFn = self.feedforwardlayer(oAttention, i)
         self.forward_runtime["final"] = {}
@@ -281,7 +194,7 @@ class Transformer():
 
         dbetaf = np.sum(dXlf, axis=0)
 
-        dX_hat = dXlf * modelParams["gama"][layerindex]
+        dX_hat = dXlf * modelParams.gama[layerindex]
         # d= derivative , m = mean , f= final layer norm
         dXhat_dmf = -1 / \
             ((runtimeParams["Xlv"][layerindex]+epsilon)**0.5)  # m = mean
@@ -290,13 +203,13 @@ class Transformer():
             (runtimeParams["Xlv"][layerindex]+epsilon)**(3/2))  # v = variance
         dvf = np.sum(dX_hat * dXhat_dvf, axis=1, keepdims=True)
         dXhat_dXfn = -dXhat_dmf
-        dm_dXfn = 1/(self.dimensions["ed"])
-        dv_dXfn = (2/(self.dimensions["ed"])) * (runtimeParams["input"]
+        dm_dXfn = 1/(self.dimensions.ed)
+        dv_dXfn = (2/(self.dimensions.ed)) * (runtimeParams["input"]
                                                  [layerindex]-runtimeParams["Xlm"][layerindex])
         dXfn = dX_hat * dXhat_dXfn + dmf * dm_dXfn + dvf * dv_dXfn
 
-        Gradients["beta"][layerindex] += alpha/batch_size * dbetaf
-        Gradients["gama"][layerindex] += alpha/batch_size * dgamaf
+        Gradients.beta[layerindex] += alpha/batch_size * dbetaf
+        Gradients.gama[layerindex] += alpha/batch_size * dgamaf
         return dXfn
 
     def softmaxGrad(self, input, dinput):
@@ -316,51 +229,48 @@ class Transformer():
         dXv = Xf * (1/T)  # (T,vocab_size)
 
         dWu = t["final"]["Xlf"][0].T @ dXv  # (ed,vocab_size)
-        dXlf = dXv @ self.params["final"]["Wu"].T  # (T,ed)
+        dXlf = dXv @ self.params.final.Wu.T  # (T,ed)
 
-        self.gradients["final"]["Wu"] += alpha/batch_size * dWu
+        self.gradients.final.Wu += alpha/batch_size * dWu
 
         # ? final step layer norm gradient
-        dXfn = self.layernormGrad(dXlf, t["final"], self.params["final"],
-                                  layerindex=0, batch_size=batch_size, Gradients=self.gradients["final"],alpha=alpha)
+        dXfn = self.layernormGrad(dXlf, t["final"], self.params.final,
+                                  0, batch_size=batch_size, Gradients=self.gradients.final,alpha=alpha)
 
         # default initialization
         dXp = np.zeros_like(t["init"]["Xp"])
-        for layer in range(self.dimensions["layers"]-1, -1, -1):
+        for layer in range(self.dimensions.layers-1, -1, -1):
             # ffn gradients
             dA1 = dXfn
 
             dW1 = t["ffn"]["A0"][layer].T @ dA1
             dB1 = np.sum(dA1, axis=0, keepdims=True)
 
-            dA0 = dA1 @ self.params["ffn"]["W1"][layer].T
-            dZ0 = dA0 * drelu(t["ffn"]["Z0"][layer])
+            dA0 = dA1 @ self.params.ffn.W1[layer].T
+            dZ0 = dA0 * dgelu(t["ffn"]["Z0"][layer])
 
             dW0 = t["ffn"]["Xfn"][layer].T @ dZ0
             dB0 = np.sum(dZ0, axis=0, keepdims=True)
-            dXn2 = dZ0 @ self.params["ffn"]["W0"][layer].T
-            dXat = 1*dXfn + self.layernormGrad(dXn2, t["ffn"], self.params["ffn"], layer,
-                                               # due to residual connection
-                                               batch_size, Gradients=self.gradients["ffn"],alpha=alpha)
+            dXn2 = dZ0 @ self.params.ffn.W0[layer].T
+            dXat = 1*dXfn + self.layernormGrad(dXn2, t["ffn"], self.params.ffn, layer, batch_size, Gradients=self.gradients.ffn,alpha=alpha)
 
-            self.gradients["ffn"]["W1"][layer] += alpha/batch_size * dW1
-            self.gradients["ffn"]["B1"][layer] += alpha/batch_size * dB1
-            self.gradients["ffn"]["W0"][layer] += alpha/batch_size * dW0
-            self.gradients["ffn"]["B0"][layer] += alpha/batch_size * dB0
+            self.gradients.ffn.W1[layer] += alpha/batch_size * dW1
+            self.gradients.ffn.B1[layer] += alpha/batch_size * dB1
+            self.gradients.ffn.W0[layer] += alpha/batch_size * dW0
+            self.gradients.ffn.B0[layer] += alpha/batch_size * dB0
 
             #! Attention block grads
             dprojected_att = dXat
 
             dWp = t["attention"]["combined_att"][layer].T @ dprojected_att
 
-            dcombined_att = dprojected_att @ self.params["attention"]["Wp"][layer].T
+            dcombined_att = dprojected_att @ self.params.attention.Wp[layer].T
 
-            self.gradients["attention"]["Wp"][layer] += alpha/batch_size * dWp
-            dXn1 = np.zeros_like(t["attention"]["Xfn"]
-                                 [layer])  # to be initialized
-            for head in range(self.dimensions["heads"]):
-                sti = head * self.dimensions["v_d"]
-                dattv = dcombined_att[:, sti: sti + self.dimensions["v_d"]]
+            self.gradients.attention.Wp[layer] += alpha/batch_size * dWp
+            dXn1 = np.zeros_like(t["attention"]["Xfn"][layer])  # to be initialized
+            for head in range(self.dimensions.heads):
+                sti = head * self.dimensions.v_d
+                dattv = dcombined_att[:, sti: sti + self.dimensions.v_d]
 
                 dV = t["attention"]["att"][layer][head].T @ dattv
 
@@ -368,58 +278,57 @@ class Transformer():
 
                 att = t["attention"]["att"][layer][head]
                 dQK = self.softmaxGrad(att, datt)
-                dQK_scaled = dQK * (1/np.sqrt(self.dimensions["qk_d"]))
+                dQK_scaled = dQK * (1/np.sqrt(self.dimensions.qk_d))
                 dQ = dQK_scaled @ t["attention"]["K"][layer][head]
                 dK = dQK_scaled.T @ t["attention"]["Q"][layer][head]
                 dWq = t["attention"]["Xfn"][layer].T @ dQ
                 dWk = t["attention"]["Xfn"][layer].T @ dK
                 dWv = t["attention"]["Xfn"][layer].T @ dV
 
-                dXn1_ = dV @ self.params["attention"]["Wv"][layer][head].T + \
-                    dQ @ self.params["attention"]["Wq"][layer][head].T + \
-                    dK @ self.params["attention"]["Wk"][layer][head].T
+                dXn1_ = dV @ self.params.attention.Wv[layer][head].T + \
+                    dQ @ self.params.attention.Wq[layer][head].T + \
+                    dK @ self.params.attention.Wk[layer][head].T
                 dXn1 += dXn1_
 
-                self.gradients["attention"]["Wv"][layer][head] += alpha / \
+                self.gradients.attention.Wv[layer][head] += alpha / \
                     batch_size * dWv
-                self.gradients["attention"]["Wq"][layer][head] += alpha / \
+                self.gradients.attention.Wq[layer][head] += alpha / \
                     batch_size * dWq
-                self.gradients["attention"]["Wk"][layer][head] += alpha / \
+                self.gradients.attention.Wk[layer][head] += alpha / \
                     batch_size * dWk
 
-            dXfn = dXp = 1*dXat + self.layernormGrad(
-                dXn1, t["attention"], self.params["attention"], layer, batch_size, self.gradients["attention"],alpha=alpha)
+            dXfn = dXp = 1*dXat + self.layernormGrad(dXn1, t["attention"], self.params.attention, layer,batch_size, self.gradients.attention,alpha=alpha)
 
         #! init steps Grad
-        dEmbd = np.zeros_like(self.params["w_emd"])
+        dEmbd = np.zeros_like(self.params.w_emb)
         np.add.at(dEmbd, self.forward_runtime["init"]["x"], dXp)
-        self.gradients["w_emd"] += alpha/batch_size * dEmbd
+        self.gradients.w_emb += alpha/batch_size * dEmbd
 
     def updateWeights(self):
-        self.params["w_emd"] -= self.gradients["w_emd"]
+        self.params.w_emb -= self.gradients.w_emb
 
-        self.params["attention"]["gama"]-= self.gradients["attention"]["gama"]
-        self.params["attention"]["beta"]-= self.gradients["attention"]["beta"]
+        self.params.attention.gama-= self.gradients.attention.gama
+        self.params.attention.beta-= self.gradients.attention.beta
 
-        self.params["attention"]["Wp"]-= self.gradients["attention"]["Wp"]
-        self.params["attention"]["Wq"]-= self.gradients["attention"]["Wq"]
-        self.params["attention"]["Wk"]-= self.gradients["attention"]["Wk"]
-        self.params["attention"]["Wv"]-= self.gradients["attention"]["Wv"]
+        self.params.attention.Wp-= self.gradients.attention.Wp
+        self.params.attention.Wq-= self.gradients.attention.Wq
+        self.params.attention.Wk-= self.gradients.attention.Wk
+        self.params.attention.Wv-= self.gradients.attention.Wv
 
-        self.params["ffn"]["gama"]-= self.gradients["ffn"]["gama"]
-        self.params["ffn"]["beta"]-= self.gradients["ffn"]["beta"]
+        self.params.ffn.gama-= self.gradients.ffn.gama
+        self.params.ffn.beta-= self.gradients.ffn.beta
 
-        self.params["ffn"]["W0"]-= self.gradients["ffn"]["W0"]
-        self.params["ffn"]["B0"]-= self.gradients["ffn"]["B0"]
-        self.params["ffn"]["W1"]-= self.gradients["ffn"]["W1"]
-        self.params["ffn"]["B1"]-= self.gradients["ffn"]["B1"]
+        self.params.ffn.W0-= self.gradients.ffn.W0
+        self.params.ffn.B0-= self.gradients.ffn.B0
+        self.params.ffn.W1-= self.gradients.ffn.W1
+        self.params.ffn.B1-= self.gradients.ffn.B1
 
-        self.params["final"]["Wu"]-= self.gradients["final"]["Wu"]
+        self.params.final.Wu-= self.gradients.final.Wu
 
-        self.params["final"]["gama"]-= self.gradients["final"]["gama"]
-        self.params["final"]["beta"]-= self.gradients["final"]["beta"]
+        self.params.final.gama-= self.gradients.final.gama
+        self.params.final.beta-= self.gradients.final.beta
 #      set all gradients back to 0
-        self.default_gradients()
+        self.gradients.__init__(self.dimensions,allzero=True)
 
     def calculateBatchLoss(self, x, y):
         loss = 0
@@ -432,9 +341,9 @@ class Transformer():
             pickle.dump({"params": self.params, "dimensions": self.dimensions},
                         f, protocol=pickle.HIGHEST_PROTOCOL)
 
-
-tinygpt = Transformer(ed=32, heads=6, layers=1, qk_d=16, v_d=16,
-                      nToken=block_size, ffn_wd=4*32, savedModelFileName="toy1.pkl")
+filename = "shakespare.pkl"
+tinygpt = Transformer(ed=64, heads=4, layers=8 , qk_d=32, v_d=32,
+                      nToken=block_size, ffn_wd=4*64, savedModelFileName=filename)
 
 def train_network(iter,decay_rate,checkpoint_rate,tracking_rate,base_alpha):
     tracking = int(iter*tracking_rate)
@@ -446,16 +355,19 @@ def train_network(iter,decay_rate,checkpoint_rate,tracking_rate,base_alpha):
             tinygpt.backward(input, output, batch_size,alpha)
         tinygpt.updateWeights()
         if i% checkpoint == 0 and i!=0:
-            tinygpt.save("toy1.pkl")
+            tinygpt.save(filename)
         if i % tracking == 0:
             print(alpha)
             print(i, "/", iter, " Loss : ", tinygpt.calculateBatchLoss(x, y))
 
-train_network(0,0.0001,0.25,0.01,0.01)
+train_network(20,0,float(1),float(1/5),0.01)
 # predictoin time
-init_input = tinygpt.encode("""Muaa""")
+init_input = tinygpt.encode("""First Citizen:
+Before we proceed any further, hear me speak.
+
+Al""")
 predictions = list(init_input)
-for i in range(400):
+for i in range(200):
     output = tinygpt.forward(init_input)
     if output is None:
         break
@@ -467,7 +379,8 @@ for i in range(400):
     init_input = decodedindices
     predictions.append(maxi)
 
-tinygpt.save("toy1.pkl")
+tinygpt.save(filename)
 text = tinygpt.decode(predictions)
+
 with open("output.txt", "w", encoding="utf-8") as f:
     f.write(text)
