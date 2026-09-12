@@ -3,9 +3,9 @@ import os
 import pickle
 from process_data import load_essentials, get_target_labels, softmax, layer_norm_cal, gelu, dgelu
 import copy
-from param_init import ModelTrainableParams ,ModelDimensions
-block_size = 64
-batch_size = 16
+from param_init import ModelTrainableParams ,ModelDimensions,RuntimeParams
+block_size = 6
+batch_size = 32
 epsilon = 1e-7
 train_set, test_set, itos, stoi, encode, decode = load_essentials()
 
@@ -15,32 +15,31 @@ class Transformer():
     params : ModelTrainableParams
     gradients : ModelTrainableParams
     dimensions : ModelDimensions
+    def load_model(self,filename):
+        isModelSaved = False
+        if filename and os.path.exists(filename):
+                    with open(filename, "rb") as f:
+                        savedParams = pickle.load(f)
+                        self.params = copy.deepcopy(savedParams["params"])
+                        self.dimensions = copy.deepcopy(savedParams["dimensions"])
+                        print("loaded")
+                        isModelSaved = True
+        return isModelSaved
+    
     def __init__(self, ed, heads, qk_d, v_d, layers, ffn_wd, nToken, savedModelFileName=None) -> None:
-        isSavedParams = False
+
         self.train_set, self.test_set, self.itos, self.stoi, self.encode, self.decode = load_essentials()
+        isModelSaved = self.load_model(savedModelFileName)
+        
 
-        if savedModelFileName and os.path.exists(savedModelFileName):
-            with open(savedModelFileName, "rb") as f:
-                savedParams = pickle.load(f)
-                self.params = copy.deepcopy(savedParams["params"])
-                self.dimensions = copy.deepcopy(savedParams["dimensions"])
-                print("loaded")
-                isSavedParams = True
-
-        if not isSavedParams:
+        if not isModelSaved:
             self.dimensions = ModelDimensions(ed, qk_d, v_d,heads*v_d, ffn_wd, nToken,layers,heads,len(itos))
             self.params = ModelTrainableParams(self.dimensions)
          
-        # to initialize gradients containers for batch gradient updates
         self.gradients = ModelTrainableParams(self.dimensions,allzero=True)
-        self.gradients.__init__(self.dimensions,allzero=True)
         #! Temporary storage for runtime params in forward Pass
-        t = self.forward_runtime = {}
-        t["ffn"] = {"A0": [], "A1": [], "Z0": [],
-                    "Xfn": [], "Xhat": [], "Xlm": [], "Xlv": [], "input": []}
-        t["attention"] = {"V": [], "Q": [],
-                          "K": [], "Qk": [], "att": [], "Xhat": [], "Xlm": [], "Xlv": [], "combined_att": [], "Xfn": [], "input": []}
-        t["init"] = {"Xp": [], "input": []}
+        self.forward_runtime = RuntimeParams()
+     
 # refactor every variable access way to match refactoring
     def init_step(self, x):
         # ? dim(input) = (number of tokens in input (nToken) , embedding_dimension)
@@ -48,26 +47,26 @@ class Transformer():
                          for xi in x])
         # ? add absolute fixed positional encoding
         Xp = input + self.positional_encoding(input)
-        self.forward_runtime["init"]["Xp"] = Xp
-        self.forward_runtime["init"]["x"] = x
+        self.forward_runtime.init.Xp = Xp
+        self.forward_runtime.init.input = x
         return Xp
 
-    def attention(self, x, layer):  # dim(x) : (nToken,ed)
+    def attention(self, Xin, layer):  # dim(x) : (nToken,ed)
         # Apply layernorm to input(x)
-        Xhat, mean, variance = layer_norm_cal(x, epsilon)
+        Xhat, mean, variance = layer_norm_cal(Xin, epsilon)
         Xn1 = Xhat * self.params.attention.gama[layer] + \
             self.params.attention.beta[layer]
 
         # run attention layer heads on norm x
-        mask = np.tril(np.ones((x.shape[0])))
+        mask = np.tril(np.ones((Xin.shape[0])))
         mask[mask == 0] = -np.inf
         mask[mask == 1] = 0
         # storing runtime variables/calculated values
-        t = self.forward_runtime["attention"]
-        t["Xhat"].append(Xhat)
-        t["Xlm"].append(mean)
-        t["Xlv"].append(variance)
-        t["Xfn"].append(Xn1)
+        t = self.forward_runtime.attention
+        t.Xhat.append(Xhat)
+        t.Xlm.append(mean)
+        t.Xlv.append(variance)
+        t.Xfn.append(Xn1)
 
         # dim(V) : (head,nToken,qk_d)
         V = Xn1 @ self.params.attention.Wv[layer]
@@ -85,20 +84,20 @@ class Transformer():
 
         # dim(combined_att) : (nToken,heads*v_d)
 
-        t["combined_att"].append(attv)
+        t.combined_att.append(attv)
         # ? storing runtime variables
-        t["V"].append(V)
-        t["Q"].append(Q)
-        t["K"].append(K)
-        t["Qk"].append(Qk)
-        t["att"].append(att)
-        t["input"].append(x)
+        t.V.append(V)
+        t.Q.append(Q)
+        t.K.append(K)
+        t.QK.append(Qk)
+        t.att.append(att)
+        t.input.append(Xin)
 
         # dim(final) : (nToken,ed)
         projected_att = attv @ self.params.attention.Wp[layer]
 
         # residual connection to initial input (x)
-        Xat = x + projected_att
+        Xat = Xin + projected_att
         return Xat
 
     # ? input(number of token , dimension of embeddings)
@@ -122,10 +121,10 @@ class Transformer():
 
         return encoded
 
-    def feedforwardlayer(self, x, layer):  # dim(x) : (nToken,ed)
+    def feedforwardlayer(self, xat, layer):  # dim(x) : (nToken,ed)
         # apply layernorm to x
         # dim(Xn2) = dim(x)
-        Xhat, mean, variance = layer_norm_cal(x, epsilon)
+        Xhat, mean, variance = layer_norm_cal(xat, epsilon)
         Xn2 = Xhat * self.params.ffn.gama[layer] + \
             self.params.ffn.beta[layer]
         # dim(Z0)=dim(A0) : (nToken,ffn_wd)
@@ -137,18 +136,18 @@ class Transformer():
             self.params.ffn.B1[layer]
 
         # ? setting runtime variables
-        t = self.forward_runtime
+        t = self.forward_runtime.ffn
         # dim(t[ffn][var]) : (layer, value)
-        t["ffn"]["A0"].append(A0)
-        t["ffn"]["A1"].append(A1)
-        t["ffn"]["Z0"].append(Z0)
-        t["ffn"]["Xfn"].append(Xn2)
-        t["ffn"]["Xhat"].append(Xhat)
-        t["ffn"]["Xlm"].append(mean)
-        t["ffn"]["Xlv"].append(variance)
-        t["ffn"]["input"].append(x)
+        t.A0.append(A0)
+        t.A1.append(A1)
+        t.Z0.append(Z0)
+        t.Xfn.append(Xn2)
+        t.Xhat.append(Xhat)
+        t.Xlm.append(mean)
+        t.Xlv.append(variance)
+        t.input.append(xat)
         # residual connection to original input(x)
-        Xfn = A1 + x
+        Xfn = A1 + xat
         return Xfn
 
     def final_step(self, Xfn):  # dim(Xfn) : (nToken,ed)
@@ -163,9 +162,9 @@ class Transformer():
         Xf = softmax(Xv)
 
         # setting runtime variables
-        t = self.forward_runtime["final"]
-        t["Xhat"], t["Xlf"], t["Xlm"], t["Xlv"], t["Xv"], t["Xf"], t["input"] = [
-            Xhat], [Xlf], [Xlm], [Xlv], [Xv], [Xf], [Xfn]
+        t = self.forward_runtime.final
+        t.Xhat, t.Xlf, t.Xlm, t.Xlv, t.Xv, t.Xf, t.input  = [
+            Xhat], [Xlf], [Xlm], [Xlv], [Xv], [Xf], [Xfn] 
 
         return Xf
 
@@ -181,31 +180,27 @@ class Transformer():
         for i in range(self.dimensions.layers):
             oAttention = self.attention(oFFn, i)
             oFFn = self.feedforwardlayer(oAttention, i)
-        self.forward_runtime["final"] = {}
-        t = self.forward_runtime["final"]
-        t["Xfn"] = oFFn
         Xf = self.final_step(oFFn)
         return Xf
 
     def layernormGrad(self, dXlf, runtimeParams, modelParams, layerindex, batch_size, Gradients,alpha):
 
         dgamaf = np.sum(
-            dXlf * runtimeParams["Xhat"][layerindex], axis=0)  # (1,ed)
+            dXlf * runtimeParams.Xhat[layerindex], axis=0)  # (1,ed)
 
         dbetaf = np.sum(dXlf, axis=0)
 
         dX_hat = dXlf * modelParams.gama[layerindex]
         # d= derivative , m = mean , f= final layer norm
         dXhat_dmf = -1 / \
-            ((runtimeParams["Xlv"][layerindex]+epsilon)**0.5)  # m = mean
+            ((runtimeParams.Xlv[layerindex]+epsilon)**0.5)  # m = mean
         dmf = np.sum(dX_hat * dXhat_dmf, axis=1, keepdims=True)
-        dXhat_dvf = -1/2 * (runtimeParams["input"][layerindex]-runtimeParams["Xlm"][layerindex]) / (
-            (runtimeParams["Xlv"][layerindex]+epsilon)**(3/2))  # v = variance
+        dXhat_dvf = -1/2 * (runtimeParams.input[layerindex]-runtimeParams.Xlm[layerindex]) / (
+            (runtimeParams.Xlv[layerindex]+epsilon)**(3/2))  # v = variance
         dvf = np.sum(dX_hat * dXhat_dvf, axis=1, keepdims=True)
         dXhat_dXfn = -dXhat_dmf
         dm_dXfn = 1/(self.dimensions.ed)
-        dv_dXfn = (2/(self.dimensions.ed)) * (runtimeParams["input"]
-                                                 [layerindex]-runtimeParams["Xlm"][layerindex])
+        dv_dXfn = (2/(self.dimensions.ed)) * (runtimeParams.input[layerindex]-runtimeParams.Xlm[layerindex])
         dXfn = dX_hat * dXhat_dXfn + dmf * dm_dXfn + dvf * dv_dXfn
 
         Gradients.beta[layerindex] += alpha/batch_size * dbetaf
@@ -228,31 +223,31 @@ class Transformer():
         Xf[np.arange(T), y] -= 1
         dXv = Xf * (1/T)  # (T,vocab_size)
 
-        dWu = t["final"]["Xlf"][0].T @ dXv  # (ed,vocab_size)
+        dWu = t.final.Xlf[0].T @ dXv  # (ed,vocab_size)
         dXlf = dXv @ self.params.final.Wu.T  # (T,ed)
 
         self.gradients.final.Wu += alpha/batch_size * dWu
 
         # ? final step layer norm gradient
-        dXfn = self.layernormGrad(dXlf, t["final"], self.params.final,
+        dXfn = self.layernormGrad(dXlf, t.final, self.params.final,
                                   0, batch_size=batch_size, Gradients=self.gradients.final,alpha=alpha)
 
         # default initialization
-        dXp = np.zeros_like(t["init"]["Xp"])
+        dXp = np.zeros_like(t.init.Xp)
         for layer in range(self.dimensions.layers-1, -1, -1):
             # ffn gradients
             dA1 = dXfn
 
-            dW1 = t["ffn"]["A0"][layer].T @ dA1
+            dW1 = t.ffn.A0[layer].T @ dA1
             dB1 = np.sum(dA1, axis=0, keepdims=True)
 
             dA0 = dA1 @ self.params.ffn.W1[layer].T
-            dZ0 = dA0 * dgelu(t["ffn"]["Z0"][layer])
+            dZ0 = dA0 * dgelu(t.ffn.Z0[layer])
 
-            dW0 = t["ffn"]["Xfn"][layer].T @ dZ0
+            dW0 = t.ffn.Xfn[layer].T @ dZ0
             dB0 = np.sum(dZ0, axis=0, keepdims=True)
             dXn2 = dZ0 @ self.params.ffn.W0[layer].T
-            dXat = 1*dXfn + self.layernormGrad(dXn2, t["ffn"], self.params.ffn, layer, batch_size, Gradients=self.gradients.ffn,alpha=alpha)
+            dXat = 1*dXfn + self.layernormGrad(dXn2, t.ffn,self.params.ffn, layer, batch_size, Gradients=self.gradients.ffn,alpha=alpha)
 
             self.gradients.ffn.W1[layer] += alpha/batch_size * dW1
             self.gradients.ffn.B1[layer] += alpha/batch_size * dB1
@@ -262,28 +257,28 @@ class Transformer():
             #! Attention block grads
             dprojected_att = dXat
 
-            dWp = t["attention"]["combined_att"][layer].T @ dprojected_att
+            dWp = t.attention.combined_att[layer].T @ dprojected_att
 
             dcombined_att = dprojected_att @ self.params.attention.Wp[layer].T
 
             self.gradients.attention.Wp[layer] += alpha/batch_size * dWp
-            dXn1 = np.zeros_like(t["attention"]["Xfn"][layer])  # to be initialized
+            dXn1 = np.zeros_like(t.attention.Xfn[layer])  # to be initialized
             for head in range(self.dimensions.heads):
                 sti = head * self.dimensions.v_d
                 dattv = dcombined_att[:, sti: sti + self.dimensions.v_d]
 
-                dV = t["attention"]["att"][layer][head].T @ dattv
+                dV = t.attention.att[layer][head].T @ dattv
 
-                datt = dattv @ t["attention"]["V"][layer][head].T
+                datt = dattv @ t.attention.V[layer][head].T
 
-                att = t["attention"]["att"][layer][head]
+                att = t.attention.att[layer][head]
                 dQK = self.softmaxGrad(att, datt)
                 dQK_scaled = dQK * (1/np.sqrt(self.dimensions.qk_d))
-                dQ = dQK_scaled @ t["attention"]["K"][layer][head]
-                dK = dQK_scaled.T @ t["attention"]["Q"][layer][head]
-                dWq = t["attention"]["Xfn"][layer].T @ dQ
-                dWk = t["attention"]["Xfn"][layer].T @ dK
-                dWv = t["attention"]["Xfn"][layer].T @ dV
+                dQ = dQK_scaled @ t.attention.K[layer][head]
+                dK = dQK_scaled.T @ t.attention.Q[layer][head]
+                dWq = t.attention.Xfn[layer].T @ dQ
+                dWk = t.attention.Xfn[layer].T @ dK
+                dWv = t.attention.Xfn[layer].T @ dV
 
                 dXn1_ = dV @ self.params.attention.Wv[layer][head].T + \
                     dQ @ self.params.attention.Wq[layer][head].T + \
@@ -297,11 +292,11 @@ class Transformer():
                 self.gradients.attention.Wk[layer][head] += alpha / \
                     batch_size * dWk
 
-            dXfn = dXp = 1*dXat + self.layernormGrad(dXn1, t["attention"], self.params.attention, layer,batch_size, self.gradients.attention,alpha=alpha)
+            dXfn = dXp = 1*dXat + self.layernormGrad(dXn1, t.attention, self.params.attention, layer,batch_size, self.gradients.attention,alpha=alpha)
 
         #! init steps Grad
         dEmbd = np.zeros_like(self.params.w_emb)
-        np.add.at(dEmbd, self.forward_runtime["init"]["x"], dXp)
+        np.add.at(dEmbd, self.forward_runtime.init.input, dXp)
         self.gradients.w_emb += alpha/batch_size * dEmbd
 
     def updateWeights(self):
@@ -327,6 +322,7 @@ class Transformer():
 
         self.params.final.gama-= self.gradients.final.gama
         self.params.final.beta-= self.gradients.final.beta
+
 #      set all gradients back to 0
         self.gradients.__init__(self.dimensions,allzero=True)
 
@@ -341,8 +337,8 @@ class Transformer():
             pickle.dump({"params": self.params, "dimensions": self.dimensions},
                         f, protocol=pickle.HIGHEST_PROTOCOL)
 
-filename = "shakespare.pkl"
-tinygpt = Transformer(ed=64, heads=4, layers=8 , qk_d=32, v_d=32,
+filename = "MuaazRaza.pkl"
+tinygpt = Transformer(ed=64, heads=2, layers=2 , qk_d=32, v_d=32,
                       nToken=block_size, ffn_wd=4*64, savedModelFileName=filename)
 
 def train_network(iter,decay_rate,checkpoint_rate,tracking_rate,base_alpha):
@@ -360,12 +356,9 @@ def train_network(iter,decay_rate,checkpoint_rate,tracking_rate,base_alpha):
             print(alpha)
             print(i, "/", iter, " Loss : ", tinygpt.calculateBatchLoss(x, y))
 
-train_network(20,0,float(1),float(1/5),0.01)
+train_network(3000,0,0.5,0.01,0.01)
 # predictoin time
-init_input = tinygpt.encode("""First Citizen:
-Before we proceed any further, hear me speak.
-
-Al""")
+init_input = tinygpt.encode("""Muaaz """)
 predictions = list(init_input)
 for i in range(200):
     output = tinygpt.forward(init_input)

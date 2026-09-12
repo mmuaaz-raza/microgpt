@@ -75,7 +75,6 @@ class AttentionParams():
             self.gama = np.zeros((layers, ed))
             self.beta = np.zeros((layers, ed))
             
-            
             self.Wq = np.zeros((layers, heads, ed, qk_d)) 
             self.Wk = np.zeros((layers, heads, ed, qk_d)) 
             self.Wv = np.zeros((layers, heads, ed, v_d)) 
@@ -94,7 +93,7 @@ class AttentionParams():
 class FinalBlockParams():
     dimensions: InitVar[ModelDimensions]
     allzero:InitVar[bool] = False
-    Wun: np.ndarray = field(init=False)
+    Wu: np.ndarray = field(init=False)
     gama: np.ndarray = field(init=False)
     beta: np.ndarray = field(init=False)
     
@@ -128,5 +127,69 @@ class ModelTrainableParams():
         self.ffn = FFNParams(dimensions,allzero)
         self.final = FinalBlockParams(dimensions,allzero)
         rng = np.random.default_rng()
-        self.w_emb= rng.standard_normal((dimensions.vocab_size, dimensions.ed)) * (1 / (dimensions.ed)**0.5)
+        if allzero:
+            self.w_emb= np.zeros((dimensions.vocab_size, dimensions.ed))
+        else:
+            self.w_emb= rng.standard_normal((dimensions.vocab_size, dimensions.ed)) * (1 / (dimensions.ed)**0.5)
         
+
+
+
+@dataclass
+class InitEmbeddingBlockRP():
+    Xp: np.ndarray   = field(default_factory=lambda : np.array([]))
+    input: np.ndarray = field(default_factory=lambda : np.array([]))
+    
+
+
+@dataclass
+class FFNBlockRP():
+    A0: list = field(default_factory=lambda :[])
+    A1: list = field(default_factory=lambda :[])
+    Z0: list = field(default_factory=lambda :[])
+    Xfn: list = field(default_factory=lambda :[])
+    Xhat: list = field(default_factory=lambda :[])
+    Xlm: list = field(default_factory=lambda :[])
+    Xlv: list = field(default_factory=lambda :[])
+    input: list = field(default_factory=lambda :[])
+
+@dataclass
+class AttentionBlockRP:
+    K: list = field(default_factory=lambda :[])
+    Q: list = field(default_factory=lambda :[])
+    V: list = field(default_factory=lambda :[])
+    QK: list = field(default_factory=lambda :[])
+    att: list = field(default_factory=lambda :[])
+    Xhat: list = field(default_factory=lambda :[])
+    Xlm: list = field(default_factory=lambda :[])
+    Xlv: list = field(default_factory=lambda :[])
+    combined_att: list = field(default_factory=lambda :[])
+    Xfn: list = field(default_factory=lambda :[])
+    input: list = field(default_factory=lambda :[])
+
+@dataclass
+class FinalBlockRP:
+       Xhat: list = field(default_factory=lambda :[])
+       Xlf: list = field(default_factory=lambda :[])
+       Xlm: list = field(default_factory=lambda :[])
+       Xlv: list = field(default_factory=lambda :[])
+       Xv: list = field(default_factory=lambda :[])
+       Xf: list = field(default_factory=lambda :[])
+       input: list = field(default_factory=lambda :[])
+    
+
+
+@dataclass
+class RuntimeParams():
+    init : InitEmbeddingBlockRP
+    attention : AttentionBlockRP
+    ffn: FFNBlockRP
+    final = FinalBlockRP
+
+    def __init__(self) -> None:
+        self.init = InitEmbeddingBlockRP()
+        self.attention = AttentionBlockRP()
+        self.ffn = FFNBlockRP()
+        self.final = FinalBlockRP()
+
+
