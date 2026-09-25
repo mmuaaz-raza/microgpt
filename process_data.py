@@ -8,12 +8,11 @@ def load_vocabulary(data):
 
 def load_essentials():
     # wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
-    with open("data2.txt") as file:
+    with open("input.txt") as file:
         data = file.read()
     n = int(0.9*len(list(data)))
     # 90% data ~ trainset 
-    train_set = data[:]
-                    #  n]
+    train_set = data[:n]
     test_set = data[n:]
     # index to string , string to index lookup tables
     
@@ -42,8 +41,8 @@ def get_target_labels(block_size,data,batch_size):
 
 
 def softmax(x):
-    x_shifted = x - np.max(x, axis=1, keepdims=True)
-    return np.exp(x_shifted)/(np.sum(np.exp(x_shifted),axis=1,keepdims=True))
+    x_shifted = x - np.max(x, axis=-1, keepdims=True)
+    return np.exp(x_shifted)/(np.sum(np.exp(x_shifted),axis=-1,keepdims=True))
 
 def layer_norm_cal(x,epsilon):
     mean = np.mean(x,axis=1,keepdims=True)

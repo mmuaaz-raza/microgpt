@@ -4,7 +4,7 @@ import pickle
 from process_data import load_essentials, get_target_labels, softmax, layer_norm_cal, gelu, dgelu
 import copy
 from param_init import ModelTrainableParams ,ModelDimensions,RuntimeParams
-block_size = 6
+block_size = 64
 batch_size = 32
 epsilon = 1e-7
 train_set, test_set, itos, stoi, encode, decode = load_essentials()
@@ -176,6 +176,7 @@ class Transformer():
             print("Unacceptable number of input tokens")
             exit(501)
             return
+        self.forward_runtime = RuntimeParams()  
         oFFn = self.init_step(x)
         for i in range(self.dimensions.layers):
             oAttention = self.attention(oFFn, i)
@@ -183,34 +184,74 @@ class Transformer():
         Xf = self.final_step(oFFn)
         return Xf
 
-    def layernormGrad(self, dXlf, runtimeParams, modelParams, layerindex, batch_size, Gradients,alpha):
+    # def layernormGrad(self, dXlf, runtimeParams, modelParams, layerindex, batch_size, Gradients,alpha):
 
-        dgamaf = np.sum(
-            dXlf * runtimeParams.Xhat[layerindex], axis=0)  # (1,ed)
+    #     dgamaf = np.sum(
+    #         dXlf * runtimeParams.Xhat[layerindex], axis=0)  # (1,ed)
 
-        dbetaf = np.sum(dXlf, axis=0)
+    #     dbetaf = np.sum(dXlf, axis=0)
 
-        dX_hat = dXlf * modelParams.gama[layerindex]
-        # d= derivative , m = mean , f= final layer norm
-        dXhat_dmf = -1 / \
-            ((runtimeParams.Xlv[layerindex]+epsilon)**0.5)  # m = mean
-        dmf = np.sum(dX_hat * dXhat_dmf, axis=1, keepdims=True)
-        dXhat_dvf = -1/2 * (runtimeParams.input[layerindex]-runtimeParams.Xlm[layerindex]) / (
-            (runtimeParams.Xlv[layerindex]+epsilon)**(3/2))  # v = variance
-        dvf = np.sum(dX_hat * dXhat_dvf, axis=1, keepdims=True)
-        dXhat_dXfn = -dXhat_dmf
-        dm_dXfn = 1/(self.dimensions.ed)
-        dv_dXfn = (2/(self.dimensions.ed)) * (runtimeParams.input[layerindex]-runtimeParams.Xlm[layerindex])
-        dXfn = dX_hat * dXhat_dXfn + dmf * dm_dXfn + dvf * dv_dXfn
+    #     dX_hat = dXlf * modelParams.gama[layerindex]
+    #     # d= derivative , m = mean , f= final layer norm
+    #     dXhat_dmf = -1 / \
+    #         ((runtimeParams.Xlv[layerindex]+epsilon)**0.5)  # m = mean
+    #     dmf = np.sum(dX_hat * dXhat_dmf, axis=1, keepdims=True)
+    #     dXhat_dvf = -1/2 * (runtimeParams.input[layerindex]-runtimeParams.Xlm[layerindex]) / (
+    #         (runtimeParams.Xlv[layerindex]+epsilon)**(3/2))  # v = variance
+    #     dvf = np.sum(dX_hat * dXhat_dvf, axis=1, keepdims=True)
+    #     dXhat_dXfn = -dXhat_dmf
+    #     dm_dXfn = 1/(self.dimensions.ed)
+    #     dv_dXfn = (2/(self.dimensions.ed)) * (runtimeParams.input[layerindex]-runtimeParams.Xlm[layerindex])
+    #     dXfn = dX_hat * dXhat_dXfn + dmf * dm_dXfn + dvf * dv_dXfn
 
-        Gradients.beta[layerindex] += alpha/batch_size * dbetaf
-        Gradients.gama[layerindex] += alpha/batch_size * dgamaf
-        return dXfn
+    #     Gradients.beta[layerindex] +=  dbetaf
+    #     Gradients.gama[layerindex] +=  dgamaf
+    #     return dXfn
+    
+    def layernormGrad(self, dY, runtimeParams, modelParams,
+                  layerindex, Gradients):
+
+        X = runtimeParams.input[layerindex]
+        Xhat = runtimeParams.Xhat[layerindex]
+
+        # dY/dgamma
+        dgamma = np.sum(dY * Xhat, axis=0)
+
+        # dY/dbeta
+        dbeta = np.sum(dY, axis=0)
+
+        # gradient through gamma
+        dXhat = dY * modelParams.gama[layerindex]
+
+        # LayerNorm backward
+        mean_dXhat = np.mean(dXhat, axis=1, keepdims=True)
+
+        mean_dXhat_Xhat = np.mean(
+            dXhat * Xhat,
+            axis=1,
+            keepdims=True
+        )
+
+        std_inv = 1.0 / np.sqrt(
+            runtimeParams.Xlv[layerindex] + epsilon
+        )
+
+        dX = std_inv * (
+            dXhat
+            - mean_dXhat
+            - Xhat * mean_dXhat_Xhat
+        )
+
+        Gradients.beta[layerindex] += dbeta
+
+        Gradients.gama[layerindex] += dgamma
+
+        return dX
 
     def softmaxGrad(self, input, dinput):
-        return input * (dinput - np.sum(dinput*input, axis=1, keepdims=True))
+        return input * (dinput - np.sum(dinput*input, axis=-1, keepdims=True))
 
-    def backward(self, x, y, batch_size,alpha):
+    def backward(self, x, y):
         Xf = self.forward(x)
         if Xf is None:
             return
@@ -226,11 +267,11 @@ class Transformer():
         dWu = t.final.Xlf[0].T @ dXv  # (ed,vocab_size)
         dXlf = dXv @ self.params.final.Wu.T  # (T,ed)
 
-        self.gradients.final.Wu += alpha/batch_size * dWu
+        self.gradients.final.Wu += dWu
 
         # ? final step layer norm gradient
         dXfn = self.layernormGrad(dXlf, t.final, self.params.final,
-                                  0, batch_size=batch_size, Gradients=self.gradients.final,alpha=alpha)
+                                  0, Gradients=self.gradients.final)
 
         # default initialization
         dXp = np.zeros_like(t.init.Xp)
@@ -247,12 +288,12 @@ class Transformer():
             dW0 = t.ffn.Xfn[layer].T @ dZ0
             dB0 = np.sum(dZ0, axis=0, keepdims=True)
             dXn2 = dZ0 @ self.params.ffn.W0[layer].T
-            dXat = 1*dXfn + self.layernormGrad(dXn2, t.ffn,self.params.ffn, layer, batch_size, Gradients=self.gradients.ffn,alpha=alpha)
+            dXat = 1*dXfn + self.layernormGrad(dXn2, t.ffn,self.params.ffn, layer, Gradients=self.gradients.ffn)
 
-            self.gradients.ffn.W1[layer] += alpha/batch_size * dW1
-            self.gradients.ffn.B1[layer] += alpha/batch_size * dB1
-            self.gradients.ffn.W0[layer] += alpha/batch_size * dW0
-            self.gradients.ffn.B0[layer] += alpha/batch_size * dB0
+            self.gradients.ffn.W1[layer] +=  dW1
+            self.gradients.ffn.B1[layer] +=  dB1
+            self.gradients.ffn.W0[layer] +=  dW0
+            self.gradients.ffn.B0[layer] +=  dB0
 
             #! Attention block grads
             dprojected_att = dXat
@@ -261,7 +302,7 @@ class Transformer():
 
             dcombined_att = dprojected_att @ self.params.attention.Wp[layer].T
 
-            self.gradients.attention.Wp[layer] += alpha/batch_size * dWp
+            self.gradients.attention.Wp[layer] +=  dWp
             dXn1 = np.zeros_like(t.attention.Xfn[layer])  # to be initialized
             for head in range(self.dimensions.heads):
                 sti = head * self.dimensions.v_d
@@ -285,43 +326,40 @@ class Transformer():
                     dK @ self.params.attention.Wk[layer][head].T
                 dXn1 += dXn1_
 
-                self.gradients.attention.Wv[layer][head] += alpha / \
-                    batch_size * dWv
-                self.gradients.attention.Wq[layer][head] += alpha / \
-                    batch_size * dWq
-                self.gradients.attention.Wk[layer][head] += alpha / \
-                    batch_size * dWk
+                self.gradients.attention.Wv[layer][head] +=  dWv
+                self.gradients.attention.Wq[layer][head] +=  dWq
+                self.gradients.attention.Wk[layer][head] +=  dWk
 
-            dXfn = dXp = 1*dXat + self.layernormGrad(dXn1, t.attention, self.params.attention, layer,batch_size, self.gradients.attention,alpha=alpha)
+            dXfn = dXp = 1*dXat + self.layernormGrad(dXn1, t.attention, self.params.attention, layer, self.gradients.attention)
 
         #! init steps Grad
         dEmbd = np.zeros_like(self.params.w_emb)
         np.add.at(dEmbd, self.forward_runtime.init.input, dXp)
-        self.gradients.w_emb += alpha/batch_size * dEmbd
+        self.gradients.w_emb +=  dEmbd
 
-    def updateWeights(self):
-        self.params.w_emb -= self.gradients.w_emb
+    def updateWeights(self,alpha,batch_size):
+        self.params.w_emb -= (alpha/batch_size)* self.gradients.w_emb
 
-        self.params.attention.gama-= self.gradients.attention.gama
-        self.params.attention.beta-= self.gradients.attention.beta
+        self.params.attention.gama-= (alpha/batch_size)* self.gradients.attention.gama
+        self.params.attention.beta-= (alpha/batch_size)* self.gradients.attention.beta
 
-        self.params.attention.Wp-= self.gradients.attention.Wp
-        self.params.attention.Wq-= self.gradients.attention.Wq
-        self.params.attention.Wk-= self.gradients.attention.Wk
-        self.params.attention.Wv-= self.gradients.attention.Wv
+        self.params.attention.Wp-= (alpha/batch_size)* self.gradients.attention.Wp
+        self.params.attention.Wq-= (alpha/batch_size)* self.gradients.attention.Wq
+        self.params.attention.Wk-= (alpha/batch_size)* self.gradients.attention.Wk
+        self.params.attention.Wv-= (alpha/batch_size)* self.gradients.attention.Wv
 
-        self.params.ffn.gama-= self.gradients.ffn.gama
-        self.params.ffn.beta-= self.gradients.ffn.beta
+        self.params.ffn.gama-= (alpha/batch_size)* self.gradients.ffn.gama
+        self.params.ffn.beta-= (alpha/batch_size)* self.gradients.ffn.beta
 
-        self.params.ffn.W0-= self.gradients.ffn.W0
-        self.params.ffn.B0-= self.gradients.ffn.B0
-        self.params.ffn.W1-= self.gradients.ffn.W1
-        self.params.ffn.B1-= self.gradients.ffn.B1
+        self.params.ffn.W0-= (alpha/batch_size)* self.gradients.ffn.W0
+        self.params.ffn.B0-= (alpha/batch_size)* self.gradients.ffn.B0
+        self.params.ffn.W1-= (alpha/batch_size)* self.gradients.ffn.W1
+        self.params.ffn.B1-= (alpha/batch_size)* self.gradients.ffn.B1
 
-        self.params.final.Wu-= self.gradients.final.Wu
+        self.params.final.Wu-= (alpha/batch_size)* self.gradients.final.Wu
 
-        self.params.final.gama-= self.gradients.final.gama
-        self.params.final.beta-= self.gradients.final.beta
+        self.params.final.gama-= (alpha/batch_size)* self.gradients.final.gama
+        self.params.final.beta-= (alpha/batch_size)* self.gradients.final.beta
 
 #      set all gradients back to 0
         self.gradients.__init__(self.dimensions,allzero=True)
@@ -337,43 +375,58 @@ class Transformer():
             pickle.dump({"params": self.params, "dimensions": self.dimensions},
                         f, protocol=pickle.HIGHEST_PROTOCOL)
 
-filename = "MuaazRaza.pkl"
-tinygpt = Transformer(ed=64, heads=2, layers=2 , qk_d=32, v_d=32,
-                      nToken=block_size, ffn_wd=4*64, savedModelFileName=filename)
+filename = "shakespeare.pkl"
 
-def train_network(iter,decay_rate,checkpoint_rate,tracking_rate,base_alpha):
-    tracking = int(iter*tracking_rate)
-    checkpoint = int(checkpoint_rate*iter)
+tinygpt = Transformer(ed=128, heads=4, layers=3 , qk_d=32, v_d=32,
+                      nToken=block_size, ffn_wd=4*128, savedModelFileName=filename)
+
+loss_history = []
+
+def train_network(iter,decay_rate,checkpoint_rate,tracking_rate,base_alpha,warmup_steps=500):
+    tracking = max(1, int(iter*tracking_rate))
+    checkpoint = max(1, int(checkpoint_rate*iter))
     for i in range(iter):
-        alpha = float(base_alpha/(1+float(decay_rate*i)))
+        if i < warmup_steps:
+            alpha = base_alpha * (i + 1) / warmup_steps
+        else:
+            alpha = float(base_alpha/(1+float(decay_rate*(i - warmup_steps))))
         x, y = get_target_labels(batch_size=batch_size,data=train_set, block_size=block_size)
         for input, output in zip(x, y):
-            tinygpt.backward(input, output, batch_size,alpha)
-        tinygpt.updateWeights()
+            tinygpt.backward(input, output)
+        tinygpt.updateWeights(alpha, batch_size)
         if i% checkpoint == 0 and i!=0:
             tinygpt.save(filename)
         if i % tracking == 0:
-            print(alpha)
-            print(i, "/", iter, " Loss : ", tinygpt.calculateBatchLoss(x, y))
+            train_loss = tinygpt.calculateBatchLoss(x, y)
+            tx, ty = get_target_labels(batch_size=batch_size, data=test_set, block_size=block_size)
+            test_loss = tinygpt.calculateBatchLoss(tx, ty)
+            loss_history.append((i, train_loss, test_loss))
+            print(f"step {i}/{iter}  lr={alpha:.6f}  train_loss={train_loss:.4f}  test_loss={test_loss:.4f}")
 
-train_network(3000,0,0.5,0.01,0.01)
-# predictoin time
-init_input = tinygpt.encode("""Muaaz """)
-predictions = list(init_input)
-for i in range(200):
-    output = tinygpt.forward(init_input)
-    if output is None:
-        break
-    decodedindices = init_input[1:]
+train_network(10000, 1e-5, 0.1, 0.01, 0.01)
 
-    maxi = np.argmax(output[output.shape[0]-1]).item()
+# save loss curve
+import json
+with open("loss_history.json", "w") as f:
+    json.dump(loss_history, f)
 
-    decodedindices.append(maxi)
-    init_input = decodedindices
-    predictions.append(maxi)
+# # predictoin time
+# init_input = tinygpt.encode("""Muhammad Mua""")
+# predictions = list(init_input)
+# for i in range(200):
+#     output = tinygpt.forward(init_input)
+#     if output is None:
+#         break
+#     decodedindices = init_input[1:]
 
-tinygpt.save(filename)
-text = tinygpt.decode(predictions)
+#     maxi = np.argmax(output[output.shape[0]-1]).item()
 
-with open("output.txt", "w", encoding="utf-8") as f:
-    f.write(text)
+#     decodedindices.append(maxi)
+#     init_input = decodedindices
+#     predictions.append(maxi)
+
+# tinygpt.save(filename)
+# text = tinygpt.decode(predictions)
+
+# with open("output.txt", "w", encoding="utf-8") as f:
+#     f.write(text)

@@ -46,9 +46,9 @@ class FFNParams():
             self.gama = np.ones((layers, ed))
             self.beta = np.zeros((layers, ed))
 
-            self.W0 = rng.standard_normal((layers, ed, ffn_wd)) * (2 / ed**0.5)
+            self.W0 = rng.standard_normal((layers, ed, ffn_wd)) * (2 / ed)**0.5
             self.B0 = np.zeros((layers, 1, ffn_wd))
-            self.W1 = rng.standard_normal((layers, ffn_wd, ed)) * (2 / ffn_wd**0.5)
+            self.W1 = rng.standard_normal((layers, ffn_wd, ed)) * (2 / ffn_wd)**0.5
             self.B1 = np.zeros((layers, 1, ed))
 
 
