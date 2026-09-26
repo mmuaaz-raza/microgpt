@@ -177,7 +177,8 @@ class Transformer():
         return Xf
 
     def loss_calculation(self, probs, y):
-        return -np.mean([np.log(probs[i, y[i]]+1e-9) for i in range(probs.shape[0])])
+        y_trunc = y[-probs.shape[0]:]
+        return -np.mean([np.log(probs[i, y_trunc[i]]+1e-9) for i in range(probs.shape[0])])
 
     def forward(self, x):
         if len(x) > self.dimensions.nToken:
@@ -267,7 +268,8 @@ class Transformer():
 
         #! final step gradients
         T = Xf.shape[0]
-        Xf[np.arange(T), y] -= 1
+        y_trunc = y[-T:]
+        Xf[np.arange(T), y_trunc] -= 1
         dXv = Xf * (1/T)  # (T,vocab_size)
 
         dWu = t.final.Xlf[0].T @ dXv  # (ed,vocab_size)
@@ -398,7 +400,7 @@ class Transformer():
             pickle.dump({"params": self.params, "dimensions": self.dimensions,"adamParamsM":self.adamParamsM,"adamParamsV":self.adamParamsV,"epoch":epoch},
                         f, protocol=pickle.HIGHEST_PROTOCOL)
 
-filename = "shakespeare.pkl"
+filename = "shakespare.pkl"
 
 tinygpt = Transformer(ed=128, heads=4, layers=4 , qk_d=32, v_d=32,
                       nToken=block_size, ffn_wd=4*128, savedModelFileName=filename)
@@ -434,7 +436,7 @@ def train_network(iter,decay_rate,checkpoint_rate,tracking_rate,base_alpha,warmu
             loss_history.append((i, train_loss, test_loss))
             print(f"step {i}/{iter}  lr={alpha:.6f}  train_loss={train_loss:.4f}  test_loss={test_loss:.4f}")
 
-train_network(iter=10000, decay_rate=1e-5, checkpoint_rate=0.05,tracking_rate= 0.01, base_alpha=0.001,warmup_steps=100)
+train_network(iter=10000, decay_rate=1e-5, checkpoint_rate=0.05,tracking_rate= 0.01, base_alpha=0.001,warmup_steps=500)
 
 
 
