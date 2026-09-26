@@ -1,4 +1,5 @@
 import numpy as np
+import json
 import os
 import pickle
 from process_data import load_essentials, get_target_labels, softmax, layer_norm_cal, gelu, dgelu
@@ -7,6 +8,8 @@ from param_init import ModelTrainableParams ,ModelDimensions,RuntimeParams
 block_size = 64
 batch_size = 32
 epsilon = 1e-7
+beta1 =0.9
+beta2 = 0.999
 train_set, test_set, itos, stoi, encode, decode = load_essentials()
 
 
@@ -21,6 +24,8 @@ class Transformer():
                     with open(filename, "rb") as f:
                         savedParams = pickle.load(f)
                         self.params = copy.deepcopy(savedParams["params"])
+                        self.adamParamsM = copy.deepcopy(savedParams["adamParamsM"])
+                        self.adamParamsV = copy.deepcopy(savedParams["adamParamsV"])
                         self.dimensions = copy.deepcopy(savedParams["dimensions"])
                         print("loaded")
                         isModelSaved = True
@@ -35,8 +40,11 @@ class Transformer():
         if not isModelSaved:
             self.dimensions = ModelDimensions(ed, qk_d, v_d,heads*v_d, ffn_wd, nToken,layers,heads,len(itos))
             self.params = ModelTrainableParams(self.dimensions)
-         
+            self.adamParamsM = ModelTrainableParams(self.dimensions,allzero=True)
+            self.adamParamsV = ModelTrainableParams(self.dimensions,allzero=True)
+
         self.gradients = ModelTrainableParams(self.dimensions,allzero=True)
+
         #! Temporary storage for runtime params in forward Pass
         self.forward_runtime = RuntimeParams()
      
@@ -172,10 +180,8 @@ class Transformer():
         return -np.mean([np.log(probs[i, y[i]]+1e-9) for i in range(probs.shape[0])])
 
     def forward(self, x):
-        if len(x) != self.dimensions.nToken:
-            print("Unacceptable number of input tokens")
-            exit(501)
-            return
+        if len(x) > self.dimensions.nToken:
+            x = x[-self.dimensions.nToken:]
         self.forward_runtime = RuntimeParams()  
         oFFn = self.init_step(x)
         for i in range(self.dimensions.layers):
@@ -336,32 +342,49 @@ class Transformer():
         dEmbd = np.zeros_like(self.params.w_emb)
         np.add.at(dEmbd, self.forward_runtime.init.input, dXp)
         self.gradients.w_emb +=  dEmbd
+    
+    def adamOptmizer(self, m, v, gradient, param, beta1, beta2, alpha, batch_size, t, epsilon=1e-8):
+        # We must average the gradient across the batch first!
+        grad_avg = gradient / batch_size
+        
+        m[:] = beta1 * m + (1 - beta1) * grad_avg
+        v[:] = beta2 * v + (1 - beta2) * (grad_avg ** 2)
+        
+        m_hat = m / (1 - (beta1 ** t))
+        v_hat = v / (1 - (beta2 ** t))
+    
+        param -= (alpha * m_hat) / (np.sqrt(v_hat) + epsilon)
+    
+    def updateWeights(self,alpha,batch_size,t,beta1,beta2):
+        self.adamOptmizer(self.adamParamsM.w_emb,self.adamParamsV.w_emb,self.gradients.w_emb,self.params.w_emb,beta1,beta2,alpha,batch_size,t)
+      
 
-    def updateWeights(self,alpha,batch_size):
-        self.params.w_emb -= (alpha/batch_size)* self.gradients.w_emb
+        self.adamOptmizer(self.adamParamsM.attention.gama,self.adamParamsV.attention.gama,self.gradients.attention.gama,self.params.attention.gama,beta1,beta2,alpha,batch_size,t)
+        self.adamOptmizer(self.adamParamsM.attention.beta,self.adamParamsV.attention.beta,self.gradients.attention.beta,self.params.attention.beta,beta1,beta2,alpha,batch_size,t)
 
-        self.params.attention.gama-= (alpha/batch_size)* self.gradients.attention.gama
-        self.params.attention.beta-= (alpha/batch_size)* self.gradients.attention.beta
+        self.adamOptmizer(self.adamParamsM.attention.Wp,self.adamParamsV.attention.Wp,self.gradients.attention.Wp,self.params.attention.Wp,beta1,beta2,alpha,batch_size,t)
+        self.adamOptmizer(self.adamParamsM.attention.Wq,self.adamParamsV.attention.Wq,self.gradients.attention.Wq,self.params.attention.Wq,beta1,beta2,alpha,batch_size,t)
+        self.adamOptmizer(self.adamParamsM.attention.Wk,self.adamParamsV.attention.Wk,self.gradients.attention.Wk,self.params.attention.Wk,beta1,beta2,alpha,batch_size,t)
+        self.adamOptmizer(self.adamParamsM.attention.Wv,self.adamParamsV.attention.Wv,self.gradients.attention.Wv,self.params.attention.Wv,beta1,beta2,alpha,batch_size,t)
+       
+        self.adamOptmizer(self.adamParamsM.ffn.gama,self.adamParamsV.ffn.gama,self.gradients.ffn.gama,self.params.ffn.gama,beta1,beta2,alpha,batch_size,t)
+        self.adamOptmizer(self.adamParamsM.ffn.beta,self.adamParamsV.ffn.beta,self.gradients.ffn.beta,self.params.ffn.beta,beta1,beta2,alpha,batch_size,t)
 
-        self.params.attention.Wp-= (alpha/batch_size)* self.gradients.attention.Wp
-        self.params.attention.Wq-= (alpha/batch_size)* self.gradients.attention.Wq
-        self.params.attention.Wk-= (alpha/batch_size)* self.gradients.attention.Wk
-        self.params.attention.Wv-= (alpha/batch_size)* self.gradients.attention.Wv
+       
+        
+        self.adamOptmizer(self.adamParamsM.ffn.W0,self.adamParamsV.ffn.W0,self.gradients.ffn.W0,self.params.ffn.W0,beta1,beta2,alpha,batch_size,t)
+        self.adamOptmizer(self.adamParamsM.ffn.B0,self.adamParamsV.ffn.B0,self.gradients.ffn.B0,self.params.ffn.B0,beta1,beta2,alpha,batch_size,t)
+        self.adamOptmizer(self.adamParamsM.ffn.W1,self.adamParamsV.ffn.W1,self.gradients.ffn.W1,self.params.ffn.W1,beta1,beta2,alpha,batch_size,t)
+        self.adamOptmizer(self.adamParamsM.ffn.B1,self.adamParamsV.ffn.B1,self.gradients.ffn.B1,self.params.ffn.B1,beta1,beta2,alpha,batch_size,t)
+        
+        
+        self.adamOptmizer(self.adamParamsM.final.Wu,self.adamParamsV.final.Wu,self.gradients.final.Wu,self.params.final.Wu,beta1,beta2,alpha,batch_size,t)
 
-        self.params.ffn.gama-= (alpha/batch_size)* self.gradients.ffn.gama
-        self.params.ffn.beta-= (alpha/batch_size)* self.gradients.ffn.beta
+        self.adamOptmizer(self.adamParamsM.final.gama,self.adamParamsV.final.gama,self.gradients.final.gama,self.params.final.gama,beta1,beta2,alpha,batch_size,t)
+        self.adamOptmizer(self.adamParamsM.final.beta,self.adamParamsV.final.beta,self.gradients.final.beta,self.params.final.beta,beta1,beta2,alpha,batch_size,t)
 
-        self.params.ffn.W0-= (alpha/batch_size)* self.gradients.ffn.W0
-        self.params.ffn.B0-= (alpha/batch_size)* self.gradients.ffn.B0
-        self.params.ffn.W1-= (alpha/batch_size)* self.gradients.ffn.W1
-        self.params.ffn.B1-= (alpha/batch_size)* self.gradients.ffn.B1
 
-        self.params.final.Wu-= (alpha/batch_size)* self.gradients.final.Wu
-
-        self.params.final.gama-= (alpha/batch_size)* self.gradients.final.gama
-        self.params.final.beta-= (alpha/batch_size)* self.gradients.final.beta
-
-#      set all gradients back to 0
+        # set all gradients back to 0
         self.gradients.__init__(self.dimensions,allzero=True)
 
     def calculateBatchLoss(self, x, y):
@@ -370,14 +393,14 @@ class Transformer():
             loss += self.loss_calculation(self.forward(input), output)
         return loss/batch_size
 
-    def save(self, filename):
+    def save(self, filename,epoch):
         with open(filename, 'wb') as f:
-            pickle.dump({"params": self.params, "dimensions": self.dimensions},
+            pickle.dump({"params": self.params, "dimensions": self.dimensions,"adamParamsM":self.adamParamsM,"adamParamsV":self.adamParamsV,"epoch":epoch},
                         f, protocol=pickle.HIGHEST_PROTOCOL)
 
 filename = "shakespeare.pkl"
 
-tinygpt = Transformer(ed=128, heads=4, layers=3 , qk_d=32, v_d=32,
+tinygpt = Transformer(ed=128, heads=4, layers=4 , qk_d=32, v_d=32,
                       nToken=block_size, ffn_wd=4*128, savedModelFileName=filename)
 
 loss_history = []
@@ -385,17 +408,25 @@ loss_history = []
 def train_network(iter,decay_rate,checkpoint_rate,tracking_rate,base_alpha,warmup_steps=500):
     tracking = max(1, int(iter*tracking_rate))
     checkpoint = max(1, int(checkpoint_rate*iter))
-    for i in range(iter):
+    for i in range(1,iter+1):
+
         if i < warmup_steps:
             alpha = base_alpha * (i + 1) / warmup_steps
         else:
             alpha = float(base_alpha/(1+float(decay_rate*(i - warmup_steps))))
+
         x, y = get_target_labels(batch_size=batch_size,data=train_set, block_size=block_size)
+
         for input, output in zip(x, y):
             tinygpt.backward(input, output)
-        tinygpt.updateWeights(alpha, batch_size)
-        if i% checkpoint == 0 and i!=0:
-            tinygpt.save(filename)
+        tinygpt.updateWeights(alpha, batch_size,i,beta1,beta2)
+        
+        if i==iter or not i % checkpoint  :
+            tinygpt.save(filename,i)
+            with open("loss_history.json", "w") as f:
+                json.dump(loss_history, f)
+
+            
         if i % tracking == 0:
             train_loss = tinygpt.calculateBatchLoss(x, y)
             tx, ty = get_target_labels(batch_size=batch_size, data=test_set, block_size=block_size)
@@ -403,30 +434,29 @@ def train_network(iter,decay_rate,checkpoint_rate,tracking_rate,base_alpha,warmu
             loss_history.append((i, train_loss, test_loss))
             print(f"step {i}/{iter}  lr={alpha:.6f}  train_loss={train_loss:.4f}  test_loss={test_loss:.4f}")
 
-train_network(10000, 1e-5, 0.1, 0.01, 0.01)
+train_network(iter=10000, decay_rate=1e-5, checkpoint_rate=0.05,tracking_rate= 0.01, base_alpha=0.001,warmup_steps=100)
 
-# save loss curve
-import json
-with open("loss_history.json", "w") as f:
-    json.dump(loss_history, f)
+
+
+
 
 # # predictoin time
-# init_input = tinygpt.encode("""Muhammad Mua""")
-# predictions = list(init_input)
-# for i in range(200):
-#     output = tinygpt.forward(init_input)
-#     if output is None:
-#         break
-#     decodedindices = init_input[1:]
+init_input = tinygpt.encode("""ROMEO:\n""")
+predictions = list(init_input)
+for i in range(200):
+    output = tinygpt.forward(init_input)
+    if output is None:
+        break
+    
+    maxi = np.argmax(output[-1]).item()
+    init_input.append(maxi)
+    predictions.append(maxi)
+    
+    if len(init_input) > block_size:
+        init_input = init_input[1:]
 
-#     maxi = np.argmax(output[output.shape[0]-1]).item()
 
-#     decodedindices.append(maxi)
-#     init_input = decodedindices
-#     predictions.append(maxi)
+text = tinygpt.decode(predictions)
 
-# tinygpt.save(filename)
-# text = tinygpt.decode(predictions)
-
-# with open("output.txt", "w", encoding="utf-8") as f:
-#     f.write(text)
+with open("output.txt", "w", encoding="utf-8") as f:
+    f.write(text)
