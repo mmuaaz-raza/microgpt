@@ -356,8 +356,32 @@ class Transformer():
         v_hat = v / (1 - (beta2 ** t))
     
         param -= (alpha * m_hat) / (np.sqrt(v_hat) + epsilon)
+    def SDGOptimizer(self,gradient,param,alpha,batch_size):
+        grad_avg = gradient / batch_size
+        param -= alpha*grad_avg
     
-    def updateWeights(self,alpha,batch_size,t,beta1,beta2):
+    def updateWeightsSDG(self,alpha,batch_size):
+        self.SDGOptimizer(self.gradients.w_emb,self.params.w_emb,alpha,batch_size)
+        self.SDGOptimizer(self.gradients.attention.gama,self.params.attention.gama,alpha,batch_size)
+        self.SDGOptimizer(self.gradients.attention.beta,self.params.attention.beta,alpha,batch_size)
+        self.SDGOptimizer(self.gradients.attention.Wp,self.params.attention.Wp,alpha,batch_size)
+        self.SDGOptimizer(self.gradients.attention.Wq,self.params.attention.Wq,alpha,batch_size)
+        self.SDGOptimizer(self.gradients.attention.Wk,self.params.attention.Wk,alpha,batch_size)
+        self.SDGOptimizer(self.gradients.attention.Wv,self.params.attention.Wv,alpha,batch_size)
+        self.SDGOptimizer(self.gradients.ffn.gama,self.params.ffn.gama,alpha,batch_size)
+        self.SDGOptimizer(self.gradients.ffn.beta,self.params.ffn.beta,alpha,batch_size)
+        self.SDGOptimizer(self.gradients.ffn.W0,self.params.ffn.W0,alpha,batch_size)
+        self.SDGOptimizer(self.gradients.ffn.B0,self.params.ffn.B0,alpha,batch_size)
+        self.SDGOptimizer(self.gradients.ffn.W1,self.params.ffn.W1,alpha,batch_size)
+        self.SDGOptimizer(self.gradients.ffn.B1,self.params.ffn.B1,alpha,batch_size)
+        self.SDGOptimizer(self.gradients.final.Wu,self.params.final.Wu,alpha,batch_size)
+        self.SDGOptimizer(self.gradients.final.gama,self.params.final.gama,alpha,batch_size)
+        self.SDGOptimizer(self.gradients.final.beta,self.params.final.beta,alpha,batch_size)
+
+        # set all gradients back to 0
+        self.gradients.__init__(self.dimensions,allzero=True)
+
+    def updateWeightsAdam(self,alpha,batch_size,t,beta1,beta2):
         self.adamOptmizer(self.adamParamsM.w_emb,self.adamParamsV.w_emb,self.gradients.w_emb,self.params.w_emb,beta1,beta2,alpha,batch_size,t)
       
 
@@ -400,7 +424,7 @@ class Transformer():
             pickle.dump({"params": self.params, "dimensions": self.dimensions,"adamParamsM":self.adamParamsM,"adamParamsV":self.adamParamsV,"epoch":epoch},
                         f, protocol=pickle.HIGHEST_PROTOCOL)
 
-filename = "shakespare.pkl"
+filename = "shakespare_sdg.pkl"
 
 tinygpt = Transformer(ed=128, heads=4, layers=4 , qk_d=32, v_d=32,
                       nToken=block_size, ffn_wd=4*128, savedModelFileName=filename)
@@ -421,11 +445,11 @@ def train_network(iter,decay_rate,checkpoint_rate,tracking_rate,base_alpha,warmu
 
         for input, output in zip(x, y):
             tinygpt.backward(input, output)
-        tinygpt.updateWeights(alpha, batch_size,i,beta1,beta2)
+        tinygpt.updateWeightsSDG(alpha, batch_size)
         
         if i==iter or not i % checkpoint  :
             tinygpt.save(filename,i)
-            with open("loss_history.json", "w") as f:
+            with open("loss_history_sdg.json", "w") as f:
                 json.dump(loss_history, f)
 
             
@@ -436,29 +460,51 @@ def train_network(iter,decay_rate,checkpoint_rate,tracking_rate,base_alpha,warmu
             loss_history.append((i, train_loss, test_loss))
             print(f"step {i}/{iter}  lr={alpha:.6f}  train_loss={train_loss:.4f}  test_loss={test_loss:.4f}")
 
-train_network(iter=10000, decay_rate=1e-5, checkpoint_rate=0.05,tracking_rate= 0.01, base_alpha=0.001,warmup_steps=500)
+train_network(iter=10000, decay_rate=1e-4, checkpoint_rate=0.05,tracking_rate= 0.01, base_alpha=0.1,warmup_steps=1000) # sdg
+# train_network(iter=10000, decay_rate=1e-5, checkpoint_rate=0.05,tracking_rate= 0.01, base_alpha=0.001,warmup_steps=500)
 
 
 
-
+def sample(probs, temperature=1.0):
+    if temperature == 0:
+        return np.argmax(probs).item()
+    
+   
+    probs = np.clip(probs, 1e-10, 1.0)
+    
+ 
+    logits = np.log(probs) / temperature
+    
+    
+    exp_logits = np.exp(logits - np.max(logits))
+    scaled_probs = exp_logits / np.sum(exp_logits)
+    
+    return np.random.choice(len(probs), p=scaled_probs)
 
 # # predictoin time
-init_input = tinygpt.encode("""ROMEO:\n""")
+inputstr = "MARCIUS:\n" 
+"""MARCIUS:\nThanks. What's the matter, you dissentious rogues,\nThat"""
+
+init_input = tinygpt.encode(inputstr)
+print(inputstr,end="")
 predictions = list(init_input)
-for i in range(200):
+# for i in range(True):
+while(True):
     output = tinygpt.forward(init_input)
     if output is None:
         break
     
-    maxi = np.argmax(output[-1]).item()
+    maxi = sample(output[-1], temperature=0.8)
     init_input.append(maxi)
-    predictions.append(maxi)
+    print(tinygpt.decode([maxi]),end="",flush=True)
+    # predictions.append(maxi)
+
     
     if len(init_input) > block_size:
         init_input = init_input[1:]
 
 
-text = tinygpt.decode(predictions)
+# text = tinygpt.decode(predictions)
 
-with open("output.txt", "w", encoding="utf-8") as f:
-    f.write(text)
+# with open("output.txt", "w", encoding="utf-8") as f:
+#     f.write(text)
