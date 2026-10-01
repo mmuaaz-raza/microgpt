@@ -5,8 +5,8 @@ import pickle
 from process_data import load_essentials, get_target_labels, softmax, layer_norm_cal, gelu, dgelu
 import copy
 from param_init import ModelTrainableParams ,ModelDimensions,RuntimeParams
-block_size = 64
-batch_size = 32
+block_size = 8
+batch_size = 1
 epsilon = 1e-7
 beta1 =0.9
 beta2 = 0.999
@@ -51,8 +51,7 @@ class Transformer():
 # refactor every variable access way to match refactoring
     def init_step(self, x):
         # ? dim(input) = (number of tokens in input (nToken) , embedding_dimension)
-        input = np.stack([self.params.w_emb[xi]
-                         for xi in x])
+        input = np.stack([self.params.w_emb[xi] for xi in x])
         # ? add absolute fixed positional encoding
         Xp = input + self.positional_encoding(input)
         self.forward_runtime.init.Xp = Xp
@@ -191,29 +190,7 @@ class Transformer():
         Xf = self.final_step(oFFn)
         return Xf
 
-    # def layernormGrad(self, dXlf, runtimeParams, modelParams, layerindex, batch_size, Gradients,alpha):
-
-    #     dgamaf = np.sum(
-    #         dXlf * runtimeParams.Xhat[layerindex], axis=0)  # (1,ed)
-
-    #     dbetaf = np.sum(dXlf, axis=0)
-
-    #     dX_hat = dXlf * modelParams.gama[layerindex]
-    #     # d= derivative , m = mean , f= final layer norm
-    #     dXhat_dmf = -1 / \
-    #         ((runtimeParams.Xlv[layerindex]+epsilon)**0.5)  # m = mean
-    #     dmf = np.sum(dX_hat * dXhat_dmf, axis=1, keepdims=True)
-    #     dXhat_dvf = -1/2 * (runtimeParams.input[layerindex]-runtimeParams.Xlm[layerindex]) / (
-    #         (runtimeParams.Xlv[layerindex]+epsilon)**(3/2))  # v = variance
-    #     dvf = np.sum(dX_hat * dXhat_dvf, axis=1, keepdims=True)
-    #     dXhat_dXfn = -dXhat_dmf
-    #     dm_dXfn = 1/(self.dimensions.ed)
-    #     dv_dXfn = (2/(self.dimensions.ed)) * (runtimeParams.input[layerindex]-runtimeParams.Xlm[layerindex])
-    #     dXfn = dX_hat * dXhat_dXfn + dmf * dm_dXfn + dvf * dv_dXfn
-
-    #     Gradients.beta[layerindex] +=  dbetaf
-    #     Gradients.gama[layerindex] +=  dgamaf
-    #     return dXfn
+   
     
     def layernormGrad(self, dY, runtimeParams, modelParams,
                   layerindex, Gradients):
@@ -311,34 +288,30 @@ class Transformer():
             dcombined_att = dprojected_att @ self.params.attention.Wp[layer].T
 
             self.gradients.attention.Wp[layer] +=  dWp
-            dXn1 = np.zeros_like(t.attention.Xfn[layer])  # to be initialized
-            for head in range(self.dimensions.heads):
-                sti = head * self.dimensions.v_d
-                dattv = dcombined_att[:, sti: sti + self.dimensions.v_d]
+            
 
-                dV = t.attention.att[layer][head].T @ dattv
+            dattv = np.transpose(dcombined_att.reshape((dcombined_att.shape[0],self.dimensions.heads,self.dimensions.v_d)),axes=(1,0,2))
+            dV = np.transpose(t.attention.att[layer],axes=(0,2,1)) @ dattv
+            datt = dattv @  np.transpose(t.attention.V[layer],axes=(0,2,1))
 
-                datt = dattv @ t.attention.V[layer][head].T
+            att = t.attention.att[layer]
+            dQK = self.softmaxGrad(att, datt)
 
-                att = t.attention.att[layer][head]
-                dQK = self.softmaxGrad(att, datt)
-                dQK_scaled = dQK * (1/np.sqrt(self.dimensions.qk_d))
-                dQ = dQK_scaled @ t.attention.K[layer][head]
-                dK = dQK_scaled.T @ t.attention.Q[layer][head]
-                dWq = t.attention.Xfn[layer].T @ dQ
-                dWk = t.attention.Xfn[layer].T @ dK
-                dWv = t.attention.Xfn[layer].T @ dV
+            dQK_scaled = dQK * (1/np.sqrt(self.dimensions.qk_d))
+            dQ = dQK_scaled @ t.attention.K[layer]
+            dK = np.transpose(dQK_scaled,axes=(0,2,1)) @ t.attention.Q[layer]
+            dWq = t.attention.Xfn[layer].T @ dQ
+            dWk = t.attention.Xfn[layer].T @ dK
+            dWv = t.attention.Xfn[layer].T @ dV
 
-                dXn1_ = dV @ self.params.attention.Wv[layer][head].T + \
-                    dQ @ self.params.attention.Wq[layer][head].T + \
-                    dK @ self.params.attention.Wk[layer][head].T
-                dXn1 += dXn1_
+            dXn1 = np.sum(dV @ np.transpose(self.params.attention.Wv[layer],axes=(0,2,1)) + dQ @ np.transpose(self.params.attention.Wq[layer],axes=(0,2,1)) + \
+                                dK @ np.transpose(self.params.attention.Wk[layer],axes=(0,2,1)),axis=0)
+            
+            self.gradients.attention.Wv[layer] +=  dWv
+            self.gradients.attention.Wq[layer] +=  dWq
+            self.gradients.attention.Wk[layer] +=  dWk
 
-                self.gradients.attention.Wv[layer][head] +=  dWv
-                self.gradients.attention.Wq[layer][head] +=  dWq
-                self.gradients.attention.Wk[layer][head] +=  dWk
-
-            dXfn = dXp = 1*dXat + self.layernormGrad(dXn1, t.attention, self.params.attention, layer, self.gradients.attention)
+            dXfn = dXp = dXat + self.layernormGrad(dXn1, t.attention, self.params.attention, layer, self.gradients.attention)
 
         #! init steps Grad
         dEmbd = np.zeros_like(self.params.w_emb)
@@ -424,7 +397,7 @@ class Transformer():
             pickle.dump({"params": self.params, "dimensions": self.dimensions,"adamParamsM":self.adamParamsM,"adamParamsV":self.adamParamsV,"epoch":epoch},
                         f, protocol=pickle.HIGHEST_PROTOCOL)
 
-filename = "shakespare_sdg.pkl"
+filename = "toy.pkl"
 
 tinygpt = Transformer(ed=128, heads=4, layers=4 , qk_d=32, v_d=32,
                       nToken=block_size, ffn_wd=4*128, savedModelFileName=filename)
@@ -445,12 +418,12 @@ def train_network(iter,decay_rate,checkpoint_rate,tracking_rate,base_alpha,warmu
 
         for input, output in zip(x, y):
             tinygpt.backward(input, output)
-        tinygpt.updateWeightsSDG(alpha, batch_size)
+        tinygpt.updateWeightsAdam(alpha, batch_size,i,beta1,beta2)
         
         if i==iter or not i % checkpoint  :
             tinygpt.save(filename,i)
-            with open("loss_history_sdg.json", "w") as f:
-                json.dump(loss_history, f)
+            # with open("loss_history.json", "w") as f:
+            #     json.dump(loss_history, f)
 
             
         if i % tracking == 0:
@@ -460,8 +433,8 @@ def train_network(iter,decay_rate,checkpoint_rate,tracking_rate,base_alpha,warmu
             loss_history.append((i, train_loss, test_loss))
             print(f"step {i}/{iter}  lr={alpha:.6f}  train_loss={train_loss:.4f}  test_loss={test_loss:.4f}")
 
-train_network(iter=10000, decay_rate=1e-4, checkpoint_rate=0.05,tracking_rate= 0.01, base_alpha=0.1,warmup_steps=1000) # sdg
-# train_network(iter=10000, decay_rate=1e-5, checkpoint_rate=0.05,tracking_rate= 0.01, base_alpha=0.001,warmup_steps=500)
+train_network(iter=1, decay_rate=1e-4, checkpoint_rate=0.05,tracking_rate= 0.01, base_alpha=0.1,warmup_steps=1000) # sdg
+# train_network(iter=0, decay_rate=1e-5, checkpoint_rate=0.05,tracking_rate= 0.01, base_alpha=0.001,warmup_steps=500)
 
 
 
@@ -482,14 +455,13 @@ def sample(probs, temperature=1.0):
     return np.random.choice(len(probs), p=scaled_probs)
 
 # # predictoin time
-inputstr = "MARCIUS:\n" 
-"""MARCIUS:\nThanks. What's the matter, you dissentious rogues,\nThat"""
+inputstr = """Raza Sha"""
 
 init_input = tinygpt.encode(inputstr)
 print(inputstr,end="")
 predictions = list(init_input)
 # for i in range(True):
-while(True):
+while(False):
     output = tinygpt.forward(init_input)
     if output is None:
         break
