@@ -19,24 +19,14 @@ from model import (
 )
 
 temperature  = 0.8
-num_samples  = 2000
+num_samples  = 500
 start        = "\n"
 output_file  = "output.txt"
 save_to_file = True
 
-tinygpt = Transformer(
-    ed=ed,
-    heads=heads,
-    layers=layers,
-    qk_d=qk_d,
-    v_d=v_d,
-    seq_len=block_size,
-    ffn_wd=ffn_wd,
-    ModelFileName=modelFilename,
-)
 
 
-def sample_token(probs: np.ndarray, temperature: float = 1.0) -> int:
+def sample_token(probs: np.ndarray, temperature: float = 1.0,) -> int:
     """Sample a token from the distribution with temperature scaling."""
     if temperature == 0:
         return int(np.argmax(probs))
@@ -49,11 +39,11 @@ def sample_token(probs: np.ndarray, temperature: float = 1.0) -> int:
     return int(np.random.choice(len(probs), p=scaled))
 
 
-def generate() -> None:
+def generate(tinygpt: Transformer,isSave: bool = False, isPrint: bool = False, fileName:str="output.txt") -> None:
     context     = tinygpt.encode(start)
     predictions = list(context)
-
-    print(start, end="")
+    if isPrint:
+        print(start, end="")
 
     for _ in range(num_samples):
         output = tinygpt.forward(np.array(context))
@@ -62,20 +52,33 @@ def generate() -> None:
 
         next_token = sample_token(output[-1], temperature)
         context.append(next_token)
-        print(tinygpt.decode([next_token]), end="", flush=True)
 
-        if save_to_file:
+        if isPrint:
+            print(tinygpt.decode([next_token]), end="", flush=True)
+
+        if isSave:
             predictions.append(next_token)
 
         if len(context) > block_size:
             context = context[1:]
 
-    if save_to_file:
+    if isSave:
         generated_text = tinygpt.decode(predictions)
-        with open(output_file, "w", encoding="utf-8") as f:
+        with open(fileName, "w", encoding="utf-8") as f:
             f.write(generated_text)
-        print(f"\n\nOutput saved to '{output_file}'.")
+        if isPrint:
+            print(f"\n\nOutput saved to '{fileName}'.")
 
 
 if __name__ == "__main__":
-    generate()
+    tinygpt = Transformer(
+        ed=ed,
+        heads=heads,
+        layers=layers,
+        qk_d=qk_d,
+        v_d=v_d,
+        seq_len=block_size,
+        ffn_wd=ffn_wd,
+        ModelFileName=modelFilename,
+    )
+    generate(tinygpt,save_to_file, False, output_file)

@@ -1,46 +1,72 @@
 # MicroGPT
 
-A **from-scratch, NumPy-only decoder-only Transformer** trained as a character-level language model on the Tiny Shakespeare dataset.  No PyTorch, no JAX — every forward pass, backward pass, and weight update is implemented by hand using pure NumPy array operations.
+A **from-scratch, NumPy-only decoder-only Transformer** trained as a character-level language model on Tiny Shakespeare.  
+No PyTorch, no JAX, no autograd — every forward pass, backward pass, and Adam update is implemented by hand with pure NumPy array operations.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![NumPy](https://img.shields.io/badge/backend-NumPy-013243.svg)](https://numpy.org/)
+
+---
+
+## Key Features
+
+- **Pure NumPy** — zero deep-learning framework dependencies
+- **Manual backpropagation** — full analytical gradients for multi-head attention, GELU FFN, LayerNorm, embeddings, and unembedding
+- **Adam with schedule** — linear warmup + inverse-time decay, implemented from the original equations
+- **Complete math write-ups** — two companion documents deriving every forward and backward equation
+- **Reproducible training** — loss curves, checkpoints, and qualitative generation samples included
 
 ---
 
 ## Architecture
 
 ```
-Token Embedding  (vocab_size × ed)
+Token Embedding  (vocab_size × d_model)
         ↓  + Sinusoidal Positional Encoding
-[Layer Norm → Multi-Head Attention → Residual] × layers
+[ LayerNorm → Multi-Head Causal Attention → Residual ]  × L
+[ LayerNorm → Feed-Forward (GELU)         → Residual ]  × L
         ↓
-[Layer Norm → Feed-Forward Network  → Residual] × layers
-        ↓
-Final Layer Norm → Unembedding (ed → vocab_size) → Softmax
+Final LayerNorm → Unembedding → Softmax
 ```
 
-| Component           | Detail                                           |
-|---------------------|--------------------------------------------------|
-| Embedding           | Learned character embedding table               |
-| Positional encoding | Fixed sinusoidal (Vaswani et al. 2017)          |
-| Attention           | Multi-head causal self-attention with Pre-LN    |
-| FFN activation      | GELU (tanh approximation, GPT-2 style)          |
-| Optimiser           | Adam with linear warmup + inverse-time LR decay |
-| Loss                | Cross-entropy (next character prediction)       |
+| Component            | Detail                                              |
+|----------------------|-----------------------------------------------------|
+| Embedding            | Learned character embedding table                   |
+| Positional encoding  | Fixed sinusoidal (Vaswani et al., 2017)             |
+| Attention            | Multi-head causal self-attention with **Pre-LN**    |
+| FFN activation       | GELU (tanh approximation, GPT-2 style)              |
+| Optimiser            | Adam with linear warmup + inverse-time LR decay     |
+| Loss                 | Cross-entropy (next-character prediction)           |
 
-### Default Hyperparameters
+### Hyperparameters
 
-| Parameter     | Value | Description                              |
-|---------------|-------|------------------------------------------|
-| `ed`          | 128   | Embedding / d_model dimension            |
-| `heads`       | 4     | Number of attention heads                |
-| `qk_d`        | 32    | Query / Key projection dim per head      |
-| `v_d`         | 32    | Value projection dim per head            |
-| `layers`      | 4     | Number of stacked Transformer blocks     |
-| `ffn_wd`      | 512   | FFN hidden width (4 × ed)                |
-| `block_size`  | 8     | Context window / sequence length         |
-| `batch_size`  | 1     | Examples per gradient step               |
-| `base_alpha`  | 0.001 | Peak learning rate                       |
-| `warmup_steps`| 500   | Steps for linear LR warmup               |
-| `beta1`       | 0.9   | Adam first-moment decay                  |
-| `beta2`       | 0.999 | Adam second-moment decay                 |
+| Parameter       | Value | Description                          |
+|-----------------|-------|--------------------------------------|
+| `d_model` (ed)  | 128   | Embedding / hidden dimension         |
+| `heads`         | 4     | Parallel attention heads             |
+| `d_k` / `d_v`   | 32    | Query-key / value dim per head       |
+| `layers`        | 4     | Stacked Transformer blocks           |
+| `ffn_wd`        | 512   | FFN hidden width (4 × d_model)       |
+| `block_size`    | 64    | Context window (sequence length)     |
+| `batch_size`    | 32    | Sequences per gradient step          |
+| `base_alpha`    | 0.001 | Peak learning rate                   |
+| `warmup_steps`  | 500   | Linear LR warmup                     |
+| `beta1`, `beta2`| 0.9, 0.999 | Adam moment coefficients        |
+
+
+---
+
+## Mathematical Documentation
+
+The two companion documents derive every equation used in the implementation:
+
+| Document | Content |
+|----------|---------|
+| [**Part 1 — Forward Pass**](docs/Transformer-I.docx) | Architecture, design decisions (Pre-LN, causal mask, per-head projections), and full forward-pass mathematics with NumPy implementations |
+| [**Part 2 — Backward Pass & Training**](docs/Transformer-II.docx) | Analytical gradients for Softmax, LayerNorm, GELU, attention, FFN, embeddings; Adam derivation; loss curves and generation samples |
+
+Both documents use a unified notation and the same hyperparameter set as the code.
 
 ---
 
@@ -48,15 +74,19 @@ Final Layer Norm → Unembedding (ed → vocab_size) → Softmax
 
 ```
 microgpt/
-├── model.py          – Transformer class (forward, backward, optimisers, save/load)
-├── Tmodel.py         – Dataclasses for parameters, dimensions, and runtime caches
-├── process_data.py   – Data loading, vocabulary, batch sampling, activations
-├── train.py          – Training loop entry point
-├── sample.py         – Text generation from a saved checkpoint
-├── stats.py          – Loss curve plotting utility
-├── input.txt         – Tiny Shakespeare corpus
-├── loss_history.json – Loss log produced during training
-└── loss_curve.png    – Saved loss curve plot
+├── model.py              # Transformer class (forward, backward, Adam, save/load)
+├── Tmodel.py             # Dataclasses for parameters, dimensions, runtime caches
+├── process_data.py       # Data loading, vocabulary, batch sampling, activations
+├── train.py              # Training loop entry point
+├── sample.py             # Autoregressive text generation from a checkpoint
+├── stats.py              # Loss-curve plotting utility
+├── input.txt             # Tiny Shakespeare corpus
+├── loss_curve.png        # Train / validation loss plot
+├── docs/
+│   ├── Transformer_Part1_Forward_Pass.docx
+│   └── Transformer_Part2_Backward_Pass.docx
+├── pyproject.toml
+└── README.md
 ```
 
 ---
@@ -73,82 +103,82 @@ uv sync
 pip install numpy matplotlib
 ```
 
-### 2. Get the dataset
-
-```bash
-wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
-```
-
-### 3. Train
+### 2. Train
 
 ```bash
 python train.py
 ```
 
-Training runs for **3 000 steps** by default with Adam.  Checkpoints are saved every 5 % of total steps and at the end.  Loss is logged every 1 % of steps to `shakespareADAM.json`.
+Training runs for **3 000 steps** by default with Adam.  
+Checkpoints are saved periodically; loss is logged to JSON.
 
-### 4. Generate text
+### 3. Generate text
 
 ```bash
 python sample.py
 ```
 
-Loads the saved checkpoint and streams 2 000 characters to stdout (temperature = 0.8).  The full output is also written to `output.txt`.
+Loads the latest checkpoint and streams characters to stdout (temperature = 0.8).  
+Full output is also written to `output.txt`.
 
-### 5. Plot the loss curve
+### 4. Plot the loss curve
 
 ```bash
 python stats.py
 ```
 
-Reads `loss_history.json` and saves/displays the train vs. test loss plot as `loss_curve.png`.
+Reads the loss history and saves/displays `loss_curve.png`.
 
 ---
 
 ## Training Progress
 
-The chart below shows cross-entropy loss over **10 000 training steps** on the Tiny Shakespeare dataset.
+![Training and validation loss](loss_curve.png)
 
-![Training and test loss curves](loss_curve.png)
+**Key observations**
 
-**Key observations:**
+- **Rapid initial descent** — loss drops from ~3.25 to ~1.60 in the first 1 000 steps as the model learns unigrams and frequent bigrams.
+- **Syntactic formation** — by step 4 000 the loss reaches ~1.35; valid English words, punctuation and dialogue format appear.
+- **Asymptotic behaviour** — training loss continues to ~1.22 while validation loss stabilises near 1.58. The ~0.36 gap is expected for a small character-level model trained without dropout or weight decay.
 
-- **Rapid initial descent** — loss drops sharply from ~3.3 to ~1.6 in the first 1 000 steps, reflecting the model quickly learning common character bigrams and word boundaries.
-- **Sustained train-loss decline** — the training loss continues falling steadily, reaching ~1.2 by step 10 000.
-- **Stable test loss** — the test (validation) loss converges to ~1.55–1.6 and remains flat after ~3 000 steps, indicating the model generalises well without obvious overfitting given the small architecture.
-- **Train–test gap** — the ~0.35 gap is typical for a model of this size on a small corpus; it can be narrowed by regularisation (e.g. dropout) or a larger block size.
-
----
 
 ## Implementation Notes
 
 ### Why NumPy only?
 
-This project is a learning exercise in understanding the internals of Transformers.  Implementing every operation explicitly — including the layer-norm backward pass, the softmax Jacobian, and the multi-head attention gradient — makes the mechanics transparent and debuggable without relying on autograd.
+This project is a learning exercise in understanding Transformer internals. Implementing every operation explicitly — including the LayerNorm backward pass, the Softmax Jacobian, and the multi-head attention gradient — makes the mechanics transparent and debuggable without relying on autograd.
 
-### Gradient flow
+### Gradient flow (high level)
 
-Backpropagation is performed in `Transformer.backward()` in `model.py`:
+Back-propagation is performed in `Transformer.backward()`:
 
-1. **Final step** — softmax + cross-entropy combined gradient, then unembedding weight gradient.
-2. **Transformer blocks (reverse order)** — FFN backward (GELU → two linears → layer-norm) followed by attention backward (output projection → head un-merge → softmax → Q/K/V projections → layer-norm).
-3. **Embedding table** — scatter-add the positional gradient back into the embedding rows that were used.
+1. **Final block** — combined Softmax + cross-entropy gradient, then unembedding and final LayerNorm.
+2. **Transformer blocks (reverse order)** — FFN backward (GELU → two linears → LayerNorm) followed by attention backward (output projection → head split → Softmax → Q/K/V projections → LayerNorm).
+3. **Embedding table** — scatter-add of the positional gradient into the rows that were looked up.
+
+Full derivations are in [Part 2](docs/Transformer-II.docx).
 
 ### Weight initialisation
 
-| Weights           | Scheme                                |
-|-------------------|---------------------------------------|
-| Embedding `w_emb` | `N(0, 1/√ed)`                         |
-| Q, K, V           | `N(0, 1/√ed)`                         |
-| Output proj `Wp`  | `N(0, 1/√v_d)`                        |
-| FFN `W0`          | `N(0, √(2/ed))`  (He initialisation)  |
-| FFN `W1`          | `N(0, √(2/ffn_wd))`                   |
-| Unembedding `Wu`  | `N(0, 1/√ed)`                         |
-| Layer-norm γ      | Ones                                  |
-| Layer-norm β      | Zeros                                 |
+| Weights              | Scheme                          |
+|----------------------|---------------------------------|
+| Embedding `W_emb`    | \(\mathcal{N}(0, 1/\sqrt{d_{\text{model}}})\) |
+| Q, K, V              | \(\mathcal{N}(0, 1/\sqrt{d_{\text{model}}})\) |
+| Output proj `W_O`    | \(\mathcal{N}(0, 1/\sqrt{d_v})\) |
+| FFN `W_0`            | \(\mathcal{N}(0, \sqrt{2/d_{\text{model}}})\) (He) |
+| FFN `W_1`            | \(\mathcal{N}(0, \sqrt{2/\text{ffn_wd}})\) |
+| Unembedding `W_U`    | \(\mathcal{N}(0, 1/\sqrt{d_{\text{model}}})\) |
+| LayerNorm \(\gamma\) | Ones                            |
+| LayerNorm \(\beta\)  | Zeros                           |
 
 ---
 
 ## License
 
 MIT
+
+---
+
+## Acknowledgements
+
+Architecture follows the spirit of [nanoGPT](https://github.com/karpathy/nanoGPT) (Karpathy, 2023) and the original Transformer (Vaswani et al., 2017). All gradients and the Adam update are derived and implemented from first principles.

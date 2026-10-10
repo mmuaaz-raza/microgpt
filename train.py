@@ -4,7 +4,7 @@ train.py
 Training loop for the MicroGPT character-level language model using Adam with
 linear warmup and inverse-time decay.
 """
-
+from sample import generate
 import json
 from model import (
     Transformer,
@@ -45,9 +45,11 @@ def train_network(
     tracking_rate: float,
     base_alpha: float,
     warmup_steps: int = 500,
+    sample_rate :float =0
 ) -> None:
     log_every        = max(1, int(number_iter * tracking_rate))
     checkpoint_every = max(1, int(number_iter * checkpoint_rate))
+    sample_every = max(1,int(number_iter*sample_rate))
 
     for step in range(1, number_iter + 1):
         if step < warmup_steps:
@@ -87,13 +89,16 @@ def train_network(
                 f"train_loss={train_loss:.4f}  "
                 f"test_loss={test_loss:.4f}"
             )
+        if step% sample_every ==0:
+            generate(tinygpt,True,False,f"ShakespareOutput{step}.txt")
 
 
 train_network(
-    number_iter=3000,
+    number_iter=4000,
     decay_rate=1e-5,
     checkpoint_rate=0.05,
     tracking_rate=0.01,
     base_alpha=0.001,
     warmup_steps=500,
+    sample_rate = 0.20
 )
