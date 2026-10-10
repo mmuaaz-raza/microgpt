@@ -1,4 +1,6 @@
 *.pkl
-*.png
 *.json
-*.md
+*.txt
+__pycache__/
+*.py[cod]
+.venv/
