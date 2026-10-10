@@ -13,7 +13,7 @@ No PyTorch, no JAX, no autograd — every forward pass, backward pass, and Adam 
 
 - **Pure NumPy** — zero deep-learning framework dependencies
 - **Manual backpropagation** — full analytical gradients for multi-head attention, GELU FFN, LayerNorm, embeddings, and unembedding
-- **Adam with schedule** — linear warmup + inverse-time decay, implemented from the original equations
+- **Adam with schedule** — linear warmup + inverse-time decay, implemented from Vthe original equations
 - **Complete math write-ups** — two companion documents deriving every forward and backward equation
 - **Reproducible training** — loss curves, checkpoints, and qualitative generation samples included
 
@@ -45,7 +45,7 @@ Final LayerNorm → Unembedding → Softmax
 |-----------------|-------|--------------------------------------|
 | `d_model` (ed)  | 128   | Embedding / hidden dimension         |
 | `heads`         | 4     | Parallel attention heads             |
-| `d_k` / `d_v`   | 32    | Query-key / value dim per head       |
+| `d_k/qk_d` / `d_v`   | 32    | Query-key / value dim per head       |
 | `layers`        | 4     | Stacked Transformer blocks           |
 | `ffn_wd`        | 512   | FFN hidden width (4 × d_model)       |
 | `block_size`    | 64    | Context window (sequence length)     |
@@ -74,17 +74,19 @@ Both documents use a unified notation and the same hyperparameter set as the cod
 
 ```
 microgpt/
-├── model.py              # Transformer class (forward, backward, Adam, save/load)
-├── Tmodel.py             # Dataclasses for parameters, dimensions, runtime caches
-├── process_data.py       # Data loading, vocabulary, batch sampling, activations
-├── train.py              # Training loop entry point
-├── sample.py             # Autoregressive text generation from a checkpoint
-├── stats.py              # Loss-curve plotting utility
-├── input.txt             # Tiny Shakespeare corpus
-├── loss_curve.png        # Train / validation loss plot
+├── model.py                  # Transformer class (forward, backward, Adam, save/load)
+├── Tmodel.py                 # Dataclasses for parameters, dimensions, runtime caches
+├── process_data.py           # Data loading, vocabulary, batch sampling, activations
+├── train.py                  # Training loop entry point with periodic sampling
+├── sample.py                 # Autoregressive text generation from a checkpoint
+├── stats.py                  # Loss-curve plotting utility
+├── input.txt                 # Tiny Shakespeare corpus
+├── loss_curve_shakespare.png # Train / validation loss plot
+├── shakespareADAM.json       # Logged training history
+├── ShakespareOutput*.txt     # Periodic qualitative generation samples
 ├── docs/
-│   ├── Transformer_Part1_Forward_Pass.docx
-│   └── Transformer_Part2_Backward_Pass.docx
+│   ├── Transformer-I.docx    # Part 1: Architecture & Forward Pass
+│   └── Transformer-II.docx   # Part 2: Backward Pass & Training
 ├── pyproject.toml
 └── README.md
 ```
@@ -109,8 +111,8 @@ pip install numpy matplotlib
 python train.py
 ```
 
-Training runs for **3 000 steps** by default with Adam.  
-Checkpoints are saved periodically; loss is logged to JSON.
+Training runs for **4 000 steps** by default with Adam (`base_alpha = 0.001`, `warmup_steps = 500`, `decay_rate = 1e-3`).  
+Checkpoints and qualitative generation samples (`ShakespareOutput{step}.txt`) are saved periodically, and loss history is logged to `shakespareADAM.json`.
 
 ### 3. Generate text
 
@@ -118,7 +120,7 @@ Checkpoints are saved periodically; loss is logged to JSON.
 python sample.py
 ```
 
-Loads the latest checkpoint and streams characters to stdout (temperature = 0.8).  
+Loads the latest checkpoint (`shakespare.pkl`) and streams characters to stdout (temperature = 0.8).  
 Full output is also written to `output.txt`.
 
 ### 4. Plot the loss curve
@@ -127,20 +129,80 @@ Full output is also written to `output.txt`.
 python stats.py
 ```
 
-Reads the loss history and saves/displays `loss_curve.png`.
+Reads the loss history and saves/displays `loss_curve_shakespare.png`.
 
 ---
 
 ## Training Progress
 
-![Training and validation loss](loss_curve.png)
+![Training and validation loss](/history/loss_curve_shakespare.png)
 
-**Key observations**
+### Loss Trajectory Analysis
 
-- **Rapid initial descent** — loss drops from ~3.25 to ~1.60 in the first 1 000 steps as the model learns unigrams and frequent bigrams.
-- **Syntactic formation** — by step 4 000 the loss reaches ~1.35; valid English words, punctuation and dialogue format appear.
-- **Asymptotic behaviour** — training loss continues to ~1.22 while validation loss stabilises near 1.58. The ~0.36 gap is expected for a small character-level model trained without dropout or weight decay.
+- **Initial rapid descent (Steps 0 – 1 000):** Cross-entropy loss drops sharply from ~3.60 to ~1.95 as the model quickly captures character unigram frequencies (whitespace, line breaks, vowels) and common bigram transitions.
+- **Syntactic consolidation (Steps 1 000 – 2 500):** Loss drops from ~1.95 to ~1.55. The network begins assembling valid English syllables, words, punctuation, and character name headers.
+- **Asymptotic convergence (Steps 2 500 – 4 000):** Training loss stabilizes around ~1.48 with validation loss near ~1.65. The ~0.17 generalization gap reflects healthy convergence on Tiny Shakespeare with minimal overfitting.
 
+### Generation Progression Across Training
+
+Periodic generation samples captured during training (`ShakespareOutput*.txt`, prompt `\n`, temperature = 0.8) demonstrate the linguistic evolution of the model:
+
+#### Step 600 (`train_loss ≈ 2.26`, `test_loss ≈ 2.23`)
+*Whitespace, capitalization, and syllable fragments begin to form:*
+```text
+IOCTTINTEH:
+For cat sar thot thall the ord the tto'l fiss tit
+O dir hom, bus and kly reaingl.
+
+AUCANK:
+Sly the llathin wilen theere thin thon me
+```
+
+#### Step 1 800 (`train_loss ≈ 1.63`, `test_loss ≈ 1.88`)
+*Common words, pronouns, and basic clause structure appear:*
+```text
+With and the you not all, man'd the news times
+The is taken loved and and by for shat seech.
+
+AUTOLY:
+For thee my sight of he
+thus baring on that will my well me be take
+Than that is our the the main; it edain mure...
+```
+
+#### Step 3 000 (`train_loss ≈ 1.50`, `test_loss ≈ 1.64`)
+*Distinct Shakespearean character names, archaic inflections, and poetic line breaks:*
+```text
+FRIAR LAURENCE:
+It soon, good when is he's bief
+To the feear'st, yet to parting the one weep;
+'Tis so not suppert, which you the wide foolicuticy,
+Richar compon our agest.
+O, what the hastisure her brow well...
+```
+
+#### Step 4 000 (`train_loss ≈ 1.49`, `test_loss ≈ 1.66`)
+*Full multi-speaker theatrical turn-taking with dialogue headers and dramatic cadence:*
+```text
+GLOUCESTER:
+And there I'll apprison him every in the id
+What tain his worse helpt thief his prisonmage
+To have than lates.
+There not holy are to much shame! but you are!
+
+AUTOLYCUS:
+Pray?
+
+RATCLIOF:
+Why, will I beseech is a couse at pardon,
+Hath will with my thought most be husband.
+
+LUCIO:
+It make you shall we may that faith to say
+Does both of a grap in their main...
+```
+
+---
 
 ## Implementation Notes
 
@@ -162,14 +224,14 @@ Full derivations are in [Part 2](docs/Transformer-II.docx).
 
 | Weights              | Scheme                          |
 |----------------------|---------------------------------|
-| Embedding `W_emb`    | \(\mathcal{N}(0, 1/\sqrt{d_{\text{model}}})\) |
-| Q, K, V              | \(\mathcal{N}(0, 1/\sqrt{d_{\text{model}}})\) |
-| Output proj `W_O`    | \(\mathcal{N}(0, 1/\sqrt{d_v})\) |
-| FFN `W_0`            | \(\mathcal{N}(0, \sqrt{2/d_{\text{model}}})\) (He) |
-| FFN `W_1`            | \(\mathcal{N}(0, \sqrt{2/\text{ffn_wd}})\) |
-| Unembedding `W_U`    | \(\mathcal{N}(0, 1/\sqrt{d_{\text{model}}})\) |
-| LayerNorm \(\gamma\) | Ones                            |
-| LayerNorm \(\beta\)  | Zeros                           |
+| Embedding `W_emb`    | $\mathcal{N}(0, 1/\sqrt{d_{\text{model}}})$ |
+| Q, K, V              | $\mathcal{N}(0, 1/\sqrt{d_{\text{model}}})$ |
+| Output proj `W_O`    | $\mathcal{N}(0, 1/\sqrt{d_v})$ |
+| FFN `W_0`            | $\mathcal{N}(0, \sqrt{2/d_{\text{model}}})$ (He) |
+| FFN `W_1`            | $\mathcal{N}(0, \sqrt{2/\text{ffn\_wd}})$ |
+| Unembedding `W_U`    | $\mathcal{N}(0, 1/\sqrt{d_{\text{model}}})$ |
+| LayerNorm $\gamma$   | Ones                            |
+| LayerNorm $\beta$    | Zeros                           |
 
 ---
 

@@ -4,8 +4,10 @@ train.py
 Training loop for the MicroGPT character-level language model using Adam with
 linear warmup and inverse-time decay.
 """
+import json
 from sample import generate
 import json
+import os
 from model import (
     Transformer,
     block_size,
@@ -22,8 +24,13 @@ from model import (
 )
 from process_data import get_target_labels
 
-LOSS_HISTORY_FILE = "shakespareADAM.json"
+LOSS_HISTORY_FILE = "history/shakespareADAM.json"
+loss_history = []
 
+if os.path.exists(LOSS_HISTORY_FILE):
+    with open(LOSS_HISTORY_FILE,"r") as f:
+        loss_history = json.load(f)
+        
 tinygpt = Transformer(
     ed=ed,
     heads=heads,
@@ -35,7 +42,6 @@ tinygpt = Transformer(
     ModelFileName=modelFilename,
 )
 
-loss_history = []
 
 
 def train_network(
@@ -51,7 +57,7 @@ def train_network(
     checkpoint_every = max(1, int(number_iter * checkpoint_rate))
     sample_every = max(1,int(number_iter*sample_rate))
 
-    for step in range(1, number_iter + 1):
+    for step in range(tinygpt.epoch, number_iter + 1):
         if step < warmup_steps:
             alpha = base_alpha * (step + 1) / warmup_steps
         else:
@@ -89,13 +95,14 @@ def train_network(
                 f"train_loss={train_loss:.4f}  "
                 f"test_loss={test_loss:.4f}"
             )
+            
         if step% sample_every ==0:
-            generate(tinygpt,True,False,f"ShakespareOutput{step}.txt")
+            generate(tinygpt,True,False,f"samples/ShakespareOutput{step}.txt")
 
 
 train_network(
     number_iter=4000,
-    decay_rate=1e-5,
+    decay_rate=1e-3,
     checkpoint_rate=0.05,
     tracking_rate=0.01,
     base_alpha=0.001,

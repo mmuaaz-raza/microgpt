@@ -41,6 +41,7 @@ class Transformer:
                 self.adamParamsM = copy.deepcopy(saved["adamParamsM"])
                 self.adamParamsV = copy.deepcopy(saved["adamParamsV"])
                 self.dimensions  = copy.deepcopy(saved["dimensions"])
+                self.epoch     = saved["epoch"]
             print(f"Model loaded from '{filename}'.")
             return True
         return False
@@ -64,6 +65,7 @@ class Transformer:
             self.encode,
             self.decode,
         ) = load_essentials()
+        self.epoch = 1 # a measure to get how much the model has been trained
 
         self.modelFileName = ModelFileName
         is_saved = self.load_model(ModelFileName)
