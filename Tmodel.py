@@ -198,3 +198,10 @@ class RuntimeParams:
         self.attention = AttentionBlockRP()
         self.ffn       = FFNBlockRP()
         self.final     = FinalBlockRP()
+
+@dataclass
+class DropOutMasks:
+    """Container for dropout masks"""   
+    Xp: np.ndarray = field(default_factory=lambda: np.array([]))
+    attention: list = field(default_factory=list)
+    ffn: list = field(default_factory=list)

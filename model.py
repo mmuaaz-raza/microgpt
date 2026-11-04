@@ -11,14 +11,14 @@ import pickle
 import numpy as np
 
 from process_data import load_essentials, softmax, layer_norm_cal, gelu, dgelu
-from Tmodel import ModelTrainableParams, ModelDimensions, RuntimeParams
+from Tmodel import ModelTrainableParams, ModelDimensions, RuntimeParams, DropOutMasks
 
 block_size    = 64
 batch_size    = 32
 epsilon       = 1e-7
 beta1         = 0.9
 beta2         = 0.999
-modelFilename = "shakespare.pkl"
+modelFilename = "shakespare2.pkl"
 
 ed     = 128
 heads  = 4
@@ -55,6 +55,8 @@ class Transformer:
         layers: int,
         ffn_wd: int,
         seq_len: int,
+        dropout_rate:float,
+        seed:int = 53,
         ModelFileName: str = None,  # type: ignore
     ) -> None:
         (
@@ -65,9 +67,12 @@ class Transformer:
             self.encode,
             self.decode,
         ) = load_essentials()
+        if dropout_rate >= 1.0:
+            raise ValueError("Drop out rate cannot be equal or greater than 1.0")
         self.epoch = 1 # a measure to get how much the model has been trained
-
+        self.dropout_rate = dropout_rate
         self.modelFileName = ModelFileName
+        self.rng = np.random.default_rng(seed)
         is_saved = self.load_model(ModelFileName)
 
         if not is_saved:
@@ -80,9 +85,10 @@ class Transformer:
             self.params      = ModelTrainableParams(self.dimensions)
             self.adamParamsM = ModelTrainableParams(self.dimensions, allzero=True)
             self.adamParamsV = ModelTrainableParams(self.dimensions, allzero=True)
-
+        
         self.gradients       = ModelTrainableParams(self.dimensions, allzero=True)
         self.forward_runtime = RuntimeParams()
+        self.dropout_masks = DropOutMasks()
 
     def save(self, epoch: int) -> None:
         if self.modelFileName:
@@ -106,15 +112,21 @@ class Transformer:
         encoded[:, 1::2] = np.cos(positions / divisor)
         return encoded
 
-    def init_step(self, x: np.ndarray) -> np.ndarray:
+    def init_step(self, x: np.ndarray,dropout:bool=True) -> np.ndarray:
         embeddings = np.stack([self.params.w_emb[xi] for xi in x])
         Xp = embeddings + self.positional_encoding(embeddings)
-
+        if dropout :
+            # dropout
+            dMask = (self.rng.random(Xp.shape) > self.dropout_rate ) / (1-self.dropout_rate)
+            self.dropout_masks.Xp = dMask
+            Xp *= dMask
+            # Xp/= (1 - self.dropout_rate)
         self.forward_runtime.init.Xp    = Xp
         self.forward_runtime.init.input = x
+
         return Xp
 
-    def attention(self, Xin: np.ndarray, layer: int) -> np.ndarray:
+    def attention(self, Xin: np.ndarray, layer: int,dropout=True) -> np.ndarray:
         t = self.forward_runtime.attention
 
         Xhat, mean, variance = layer_norm_cal(Xin, epsilon)
@@ -142,6 +154,12 @@ class Transformer:
         )
 
         projected_att = combined_att @ self.params.attention.Wp[layer]
+
+        if dropout:
+            dMask = (self.rng.random(projected_att.shape) > self.dropout_rate ) / (1-self.dropout_rate)
+            self.dropout_masks.attention.append(dMask)
+            projected_att *= dMask
+
         Xat = Xin + projected_att
 
         t.Xhat.append(Xhat)
@@ -158,7 +176,7 @@ class Transformer:
 
         return Xat
 
-    def feedforwardlayer(self, Xat: np.ndarray, layer: int) -> np.ndarray:
+    def feedforwardlayer(self, Xat: np.ndarray, layer: int,dropout=True) -> np.ndarray:
         t = self.forward_runtime.ffn
 
         Xhat, mean, variance = layer_norm_cal(Xat, epsilon)
@@ -167,6 +185,13 @@ class Transformer:
         Z0  = Xn2 @ self.params.ffn.W0[layer] + self.params.ffn.B0[layer]
         A0  = gelu(Z0)
         A1  = A0 @ self.params.ffn.W1[layer] + self.params.ffn.B1[layer]
+
+        if dropout:
+            dMask = (self.rng.random(A1.shape) >
+                     self.dropout_rate) / (1-self.dropout_rate)
+            self.dropout_masks.ffn.append(dMask)
+            A1 *= dMask
+
         Xfn = Xat + A1
 
         t.A0.append(A0)
@@ -198,16 +223,17 @@ class Transformer:
 
         return Xf
 
-    def forward(self, x: np.ndarray) -> np.ndarray:
+    def forward(self, x: np.ndarray,dropout:bool=True) -> np.ndarray:
         if len(x) > self.dimensions.seq_len:
             x = x[-self.dimensions.seq_len:]
 
+        self.dropout_masks = DropOutMasks()
         self.forward_runtime = RuntimeParams()
 
-        out = self.init_step(x)
+        out = self.init_step(x,dropout=dropout)
         for layer in range(self.dimensions.layers):
-            out = self.attention(out, layer)
-            out = self.feedforwardlayer(out, layer)
+            out = self.attention(out, layer,dropout=dropout)
+            out = self.feedforwardlayer(out, layer, dropout=dropout)
 
         return self.final_step(out)
 
@@ -219,7 +245,7 @@ class Transformer:
 
     def calculateBatchLoss(self, x: np.ndarray, y: np.ndarray) -> float:
         total_loss = sum(
-            self.loss_calculation(self.forward(inp), out)
+            self.loss_calculation(self.forward(inp,dropout=False), out)
             for inp, out in zip(x, y)
         )
         return total_loss / batch_size
@@ -254,8 +280,8 @@ class Transformer:
     def softmaxGrad(self, probs: np.ndarray, dprobs: np.ndarray) -> np.ndarray:
         return probs * (dprobs - np.sum(dprobs * probs, axis=-1, keepdims=True))
 
-    def backward(self, x: np.ndarray, y: np.ndarray) -> None:
-        Xf = self.forward(x)
+    def backward(self, x: np.ndarray, y: np.ndarray,dropout:bool=True) -> None:
+        Xf = self.forward(x,dropout=dropout)
         if Xf is None:
             return
 
@@ -282,6 +308,8 @@ class Transformer:
         # Backpropagation through Transformer blocks in reverse
         for layer in range(self.dimensions.layers - 1, -1, -1):
             dA1 = dXfn
+            if dropout :
+                dA1 = dA1 * self.dropout_masks.ffn[layer]
 
             dW1 = t.ffn.A0[layer].T @ dA1
             dB1 = np.sum(dA1, axis=0, keepdims=True)
@@ -303,6 +331,9 @@ class Transformer:
             self.gradients.ffn.B0[layer] += dB0
 
             dprojected_att = dXat
+
+            if dropout :
+                dprojected_att =dprojected_att* self.dropout_masks.attention[layer]
 
             dWp           = t.attention.combined_att[layer].T @ dprojected_att
             dcombined_att = dprojected_att @ self.params.attention.Wp[layer].T
@@ -341,7 +372,8 @@ class Transformer:
             dXfn = dXp = dXat + self.layernormGrad(
                 dXn1, t.attention, self.params.attention, layer, self.gradients.attention
             )
-
+        if dropout:
+            dXp = dXp* self.dropout_masks.Xp
         dEmbd = np.zeros_like(self.params.w_emb)
         np.add.at(dEmbd, self.forward_runtime.init.input, dXp)
         self.gradients.w_emb += dEmbd

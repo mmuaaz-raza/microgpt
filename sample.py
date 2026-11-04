@@ -80,5 +80,6 @@ if __name__ == "__main__":
         seq_len=block_size,
         ffn_wd=ffn_wd,
         ModelFileName=modelFilename,
+        dropout_rate=0.4
     )
     generate(tinygpt,save_to_file, False, output_file)
