@@ -20,7 +20,7 @@ from model import (
 
 temperature  = 0.8
 num_samples  = 500
-start        = "\n"
+start        = "ROMEO:\n"
 output_file  = "output.txt"
 save_to_file = True
 

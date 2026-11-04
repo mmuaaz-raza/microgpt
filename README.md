@@ -13,8 +13,8 @@ No PyTorch, no JAX, no autograd — every forward pass, backward pass, and Adam 
 
 - **Pure NumPy** — zero deep-learning framework dependencies
 - **Manual backpropagation** — full analytical gradients for multi-head attention, GELU FFN, LayerNorm, embeddings, and unembedding
-- **Adam with schedule** — linear warmup + inverse-time decay, implemented from Vthe original equations
-- **Complete math write-ups** — two companion documents deriving every forward and backward equation
+- **Adam with schedule** — linear warmup + inverse-time decay, implemented from the original equations
+- **Complete math write-ups** — two companion documents (PDF and DOCX) deriving every forward and backward equation
 - **Reproducible training** — loss curves, checkpoints, and qualitative generation samples included
 
 ---
@@ -59,12 +59,12 @@ Final LayerNorm → Unembedding → Softmax
 
 ## Mathematical Documentation
 
-The two companion documents derive every equation used in the implementation:
+The two companion documents derive every equation used in the implementation. Each is available as a PDF (readable directly in the browser) and as an editable DOCX:
 
-| Document | Content |
-|----------|---------|
-| [**Part 1 — Forward Pass**](docs/Transformer-I.docx) | Architecture, design decisions (Pre-LN, causal mask, per-head projections), and full forward-pass mathematics with NumPy implementations |
-| [**Part 2 — Backward Pass & Training**](docs/Transformer-II.docx) | Analytical gradients for Softmax, LayerNorm, GELU, attention, FFN, embeddings; Adam derivation; loss curves and generation samples |
+| Document | Content | Formats |
+|----------|---------|---------|
+| [**Part 1 — Forward Pass**](docs/Transformer-I.pdf) | Architecture, design decisions (Pre-LN, causal mask, per-head projections), and full forward-pass mathematics with NumPy implementations | [PDF](docs/Transformer-I.pdf) · [DOCX](docs/Transformer-I.docx) |
+| [**Part 2 — Backward Pass & Training**](docs/Transformer-II.pdf) | Analytical gradients for Softmax, LayerNorm, GELU, attention, FFN, embeddings; Adam derivation; loss curves and generation samples | [PDF](docs/Transformer-II.pdf) · [DOCX](docs/Transformer-II.docx) |
 
 Both documents use a unified notation and the same hyperparameter set as the code.
 
@@ -81,13 +81,17 @@ microgpt/
 ├── sample.py                 # Autoregressive text generation from a checkpoint
 ├── stats.py                  # Loss-curve plotting utility
 ├── input.txt                 # Tiny Shakespeare corpus
-├── loss_curve_shakespare.png # Train / validation loss plot
 ├── shakespareADAM.json       # Logged training history
 ├── ShakespareOutput*.txt     # Periodic qualitative generation samples
+├── history/
+│   └── loss_curve_shakespare.png  # Train / validation loss plot
 ├── docs/
-│   ├── Transformer-I.docx    # Part 1: Architecture & Forward Pass
-│   └── Transformer-II.docx   # Part 2: Backward Pass & Training
+│   ├── Transformer-I.pdf     # Part 1: Architecture & Forward Pass (PDF)
+│   ├── Transformer-I.docx    # Part 1: Architecture & Forward Pass (editable)
+│   ├── Transformer-II.pdf    # Part 2: Backward Pass & Training (PDF)
+│   └── Transformer-II.docx   # Part 2: Backward Pass & Training (editable)
 ├── pyproject.toml
+├── LICENSE
 └── README.md
 ```
 
@@ -218,7 +222,7 @@ Back-propagation is performed in `Transformer.backward()`:
 2. **Transformer blocks (reverse order)** — FFN backward (GELU → two linears → LayerNorm) followed by attention backward (output projection → head split → Softmax → Q/K/V projections → LayerNorm).
 3. **Embedding table** — scatter-add of the positional gradient into the rows that were looked up.
 
-Full derivations are in [Part 2](docs/Transformer-II.docx).
+Full derivations are in [Part 2 (PDF)](docs/Transformer-II.pdf) ([DOCX](docs/Transformer-II.docx)).
 
 ### Weight initialisation
 
