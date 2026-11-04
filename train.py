@@ -24,8 +24,8 @@ from model import (
 )
 from process_data import get_target_labels
 
-LOSS_HISTORY_FILE = input("Loss history file name (/history) : ") 
-OUTPUT_FILE = input("Output tracking file name (/samples) : ")
+LOSS_HISTORY_FILE = input("Loss history file name  : ")+".json" 
+OUTPUT_FILE = input("Output tracking file name : ")
 # "history/shakespareADAM1.json"
 loss_history = []
 
@@ -78,7 +78,7 @@ def train_network(
 
         if step == number_iter or step % checkpoint_every == 0:
             tinygpt.save(step)
-            with open(LOSS_HISTORY_FILE, "w") as f:
+            with open("history/"+LOSS_HISTORY_FILE, "w") as f:
                 json.dump(loss_history, f)
 
         if step % log_every == 0:
@@ -100,7 +100,7 @@ def train_network(
             )
             
         if step% sample_every ==0:
-            generate(tinygpt,True,False,f"samples/ShakespareOutput1{step}.txt")
+            generate(tinygpt,True,False,f"samples/{OUTPUT_FILE}{step}.txt")
 
 
 train_network(

@@ -18,7 +18,7 @@ batch_size    = 32
 epsilon       = 1e-7
 beta1         = 0.9
 beta2         = 0.999
-modelFilename = input("Model file name (models/) : ") 
+modelFilename = "models/"+input("Model file name : ")+".pkl"
 # "models/shakespare.pkl"
 
 ed     = 128
