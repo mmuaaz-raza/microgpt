@@ -18,7 +18,7 @@ batch_size    = 32
 epsilon       = 1e-7
 beta1         = 0.9
 beta2         = 0.999
-modelFilename = "shakespare2.pkl"
+modelFilename = "models/shakespare.pkl"
 
 ed     = 128
 heads  = 4

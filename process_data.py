@@ -8,7 +8,7 @@ functions (softmax, layer-norm, ReLU, GELU) used throughout the model.
 import numpy as np
 
 # wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
-DATA_FILE = "input.txt"
+DATA_FILE = "data/input.txt"
 
 
 def load_vocabulary(data: str):

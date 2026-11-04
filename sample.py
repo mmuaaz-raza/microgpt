@@ -21,7 +21,7 @@ from model import (
 temperature  = 0.8
 num_samples  = 500
 start        = "ROMEO:\n"
-output_file  = "output.txt"
+output_file  = "data/output.txt"
 save_to_file = True
 
 
@@ -46,7 +46,7 @@ def generate(tinygpt: Transformer,isSave: bool = False, isPrint: bool = False, f
         print(start, end="")
 
     for _ in range(num_samples):
-        output = tinygpt.forward(np.array(context))
+        output = tinygpt.forward(np.array(context),dropout=False)
         if output is None:
             break
 
