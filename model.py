@@ -9,7 +9,7 @@ import copy
 import os
 import pickle
 import numpy as np
-
+from pathlib import Path
 from process_data import load_essentials, softmax, layer_norm_cal, gelu, dgelu
 from Tmodel import ModelTrainableParams, ModelDimensions, RuntimeParams, DropOutMasks
 
@@ -19,6 +19,9 @@ epsilon       = 1e-7
 beta1         = 0.9
 beta2         = 0.999
 modelFilename = "models/"+input("Model file name : ")+".pkl"
+
+modelsDir = Path("models")
+modelsDir.mkdir(parents=True, exist_ok=True)
 # "models/shakespare.pkl"
 
 ed     = 128

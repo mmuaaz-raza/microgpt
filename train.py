@@ -5,6 +5,7 @@ Training loop for the MicroGPT character-level language model using Adam with
 linear warmup and inverse-time decay.
 """
 import json
+from pathlib import Path
 from sample import generate
 import json
 import os
@@ -24,8 +25,14 @@ from model import (
 )
 from process_data import get_target_labels
 
-LOSS_HISTORY_FILE = input("Loss history file name  : ")+".json" 
+LOSS_HISTORY_FILE = input("Loss history file name  : ")+".json"
 OUTPUT_FILE = input("Output tracking file name : ")
+
+historyDir = Path("history")
+samplesDir = Path("samples")
+historyDir.mkdir(parents=True, exist_ok=True)
+samplesDir.mkdir(parents=True, exist_ok=True)
+
 # "history/shakespareADAM1.json"
 loss_history = []
 
@@ -78,7 +85,7 @@ def train_network(
 
         if step == number_iter or step % checkpoint_every == 0:
             tinygpt.save(step)
-            with open("history/"+LOSS_HISTORY_FILE, "w") as f:
+            with open(f"history/{LOSS_HISTORY_FILE}", "w") as f:
                 json.dump(loss_history, f)
 
         if step % log_every == 0:
