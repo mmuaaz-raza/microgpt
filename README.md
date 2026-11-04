@@ -232,7 +232,7 @@ Full derivations are in [Part 2 (PDF)](docs/Transformer-II.pdf) ([DOCX](docs/Tra
 | Q, K, V              | $\mathcal{N}(0, 1/\sqrt{d_{\text{model}}})$ |
 | Output proj `W_O`    | $\mathcal{N}(0, 1/\sqrt{d_v})$ |
 | FFN `W_0`            | $\mathcal{N}(0, \sqrt{2/d_{\text{model}}})$ (He) |
-| FFN `W_1`            | $\mathcal{N}(0, \sqrt{2/\text{ffn\_wd}})$ |
+| FFN `W_1`            | $\mathcal{N}(0, \sqrt{2/\text{ffn}_{\text{wd}}})$ |
 | Unembedding `W_U`    | $\mathcal{N}(0, 1/\sqrt{d_{\text{model}}})$ |
 | LayerNorm $\gamma$   | Ones                            |
 | LayerNorm $\beta$    | Zeros                           |
