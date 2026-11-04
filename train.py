@@ -24,7 +24,9 @@ from model import (
 )
 from process_data import get_target_labels
 
-LOSS_HISTORY_FILE = "history/shakespareADAM1.json"
+LOSS_HISTORY_FILE = input("Loss history file name (/history) : ") 
+OUTPUT_FILE = input("Output tracking file name (/samples) : ")
+# "history/shakespareADAM1.json"
 loss_history = []
 
 if os.path.exists(LOSS_HISTORY_FILE):
@@ -40,7 +42,7 @@ tinygpt = Transformer(
     seq_len=block_size,
     ffn_wd=ffn_wd,
     ModelFileName=modelFilename,
-    dropout_rate=0.5
+    dropout_rate=0,
 )
 
 
@@ -102,7 +104,7 @@ def train_network(
 
 
 train_network(
-    number_iter=1,
+    number_iter=4000,
     decay_rate=1e-3,
     checkpoint_rate=0.05,
     tracking_rate=0.01,

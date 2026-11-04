@@ -37,7 +37,7 @@ class FFNParams:
     beta: np.ndarray = field(init=False)
 
     def __post_init__(self, dimensions: ModelDimensions, allzero: bool = False):
-        rng = np.random.default_rng()
+        rng = np.random.default_rng(56)
         L, E, F = dimensions.layers, dimensions.ed, dimensions.ffn_wd
 
         if allzero:
@@ -71,7 +71,7 @@ class AttentionParams:
     beta: np.ndarray = field(init=False)
 
     def __post_init__(self, dimensions: ModelDimensions, allzero: bool = False):
-        rng = np.random.default_rng()
+        rng = np.random.default_rng(56)
         L, H = dimensions.layers, dimensions.heads
         E, QK, V = dimensions.ed, dimensions.qk_d, dimensions.v_d
 
@@ -110,7 +110,7 @@ class FinalBlockParams:
             self.gama = np.zeros((1, E))
             self.beta = np.zeros((1, E))
         else:
-            rng = np.random.default_rng()
+            rng = np.random.default_rng(56)
             self.Wu   = rng.standard_normal((E, V)) / E ** 0.5
             self.gama = np.ones((1, E))
             self.beta = np.zeros((1, E))
@@ -130,7 +130,7 @@ class ModelTrainableParams:
         self.ffn       = FFNParams(dimensions, allzero)
         self.final     = FinalBlockParams(dimensions, allzero)
 
-        rng = np.random.default_rng()
+        rng = np.random.default_rng(56)
         if allzero:
             self.w_emb = np.zeros((dimensions.vocab_size, dimensions.ed))
         else:
