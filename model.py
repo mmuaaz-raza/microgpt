@@ -26,7 +26,7 @@ modelsDir.mkdir(parents=True, exist_ok=True)
 
 ed     = 128
 heads  = 4
-qk_d   = 32
+qk_d   = 32*heads # total across heads , 32 on each head
 v_d    = 32
 layers = 4
 ffn_wd = 4 * ed

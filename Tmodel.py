@@ -85,10 +85,10 @@ class AttentionParams:
         else:
             self.gama = np.ones((L, E))
             self.beta = np.zeros((L, E))
-            self.Wq   = rng.standard_normal((L, H, E, QK)) * (1 / E ** 0.5)
-            self.Wk   = rng.standard_normal((L, H, E, QK)) * (1 / E ** 0.5)
-            self.Wv   = rng.standard_normal((L, H, E, V))  * (1 / E ** 0.5)
-            self.Wp   = rng.standard_normal((L, V * H, E)) * (1 / V ** 0.5)
+            self.Wq   = rng.standard_normal((L, H, E, QK)) * (1 / (E/H) ** 0.5)
+            self.Wk   = rng.standard_normal((L, H, E, QK)) * (1 / (E/H) ** 0.5)
+            self.Wv   = rng.standard_normal((L, H, E, V))  * (1 / (E/H) ** 0.5)
+            self.Wp   = rng.standard_normal((L, V * H, E)) * (1 / (V*H) ** 0.5)
 
 
 @dataclass

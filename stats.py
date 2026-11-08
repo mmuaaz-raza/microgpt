@@ -8,8 +8,8 @@ import os
 import json
 import matplotlib.pyplot as plt
 
-DEFAULT_FILES = ["history/shakespareADAM.json"]
-OUTPUT_IMAGE_FILE = "history/loss_curve_shakespare.png"
+DEFAULT_FILES = ["history/shPlainnp.json"]
+OUTPUT_IMAGE_FILE = "history/loss_curve_shPlainnp.png"
 
 
 def plot_losses(filename: str = None) -> None:

@@ -34,33 +34,61 @@ samplesDir.mkdir(parents=True, exist_ok=True)
 trainset,testset,itos,stoi,encode,decode = load_essentials()
 vocab_size = len(itos)
 class Transformer(nn.Module):
+    positionalEncodings: torch.Tensor
+    
     def __init__(self) -> None:
         super().__init__()
         self.embeddings = nn.Embedding(vocab_size,ed)
-        self.positionalEmbeddings = nn.Embedding(block_size,ed)
+        self.register_buffer("positionalEncodings",torch.from_numpy(self.positional_encoding()).float())
         self.dropout = nn.Dropout(dropout)
         self.blocks = nn.Sequential(*[Block(heads,qk_d) for _ in range(layers)],
                                      nn.LayerNorm(ed,eps=epsilon))
-        self.Wu = nn.Linear(ed,vocab_size)
+        self.Wu = nn.Linear(ed,vocab_size,bias=False)
+        self._init_weights()
+    
+    def positional_encoding(self) -> np.ndarray:
+            
+            posEncodings   = np.zeros((block_size, ed))
+            divisor   = 10000 ** (np.arange(0, ed, 2) / ed)
+            positions = np.arange(block_size)[:, np.newaxis]
+    
+            posEncodings[:, 0::2] = np.sin(positions / divisor)
+            posEncodings[:, 1::2] = np.cos(positions / divisor)
+            return posEncodings
+    
+    def _init_weights(self):
+        nrm = nn.init.normal_
 
-    def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
-            nn.init.kaiming_normal_(module.weight, mode='fan_in', nonlinearity='relu')
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=1)
-        elif isinstance(module, nn.LayerNorm):
-            nn.init.ones_(module.weight)
-            nn.init.zeros_(module.bias)
+        def zero_bias(layer):
+            if layer.bias is not None:
+                nn.init.zeros_(layer.bias)
 
+        nrm(self.embeddings.weight, 0.0, ed ** -0.5)
+        nrm(self.Wu.weight, 0.0, ed ** -0.5)
+        zero_bias(self.Wu)
+
+        for block in self.blocks:
+            if not isinstance(block, Block):
+                continue  # skip the final LayerNorm
+            att = block.attention
+            for h in att.heads:
+                for lin in (h.Wq, h.Wk, h.Wv):
+                    nrm(lin.weight, 0.0, (ed / heads) ** -0.5)  # type: ignore
+                    zero_bias(lin)
+            nrm(att.Wp.weight, 0.0, (heads * v_d) ** -0.5)
+            zero_bias(att.Wp)
+            up, down = block.ffwd.net[0], block.ffwd.net[2]
+            nrm(up.weight, 0.0, (2 / ed) ** 0.5)  # type: ignore
+            nrm(down.weight, 0.0, (2 / ffn_wd) ** 0.5)  # type: ignore
+            zero_bias(up)
+            zero_bias(down)
     def forward(self,input,target=None):
         if isinstance(input,np.ndarray):
             input = torch.from_numpy(input).to(device)
         B,T  = input.shape 
         loss = None
 
-        Xp = self.embeddings(input) + self.positionalEmbeddings(torch.arange(T,device=device))
+        Xp = self.embeddings(input) + self.positionalEncodings[:T]
         Xp = self.dropout(Xp)
         Xfn = self.blocks(Xp)
         logits = Xv = self.Wu(Xfn)
@@ -114,7 +142,7 @@ class MultiHeadAttention(nn.Module):
     def __init__(self,head_dim,head_num):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_dim) for _ in range(head_num)])
-        self.Wp = nn.Linear(head_num*v_d,ed)
+        self.Wp = nn.Linear(head_num*v_d,ed,bias=False)
         self.dropout = nn.Dropout(dropout)
     def forward(self,input):
         combined_att = torch.cat([h(input) for h in self.heads],dim=-1)
@@ -124,9 +152,9 @@ class MultiHeadAttention(nn.Module):
 class Head(nn.Module):
     def __init__(self,qk_d) -> None:
         super().__init__()
-        self.Wq = nn.Linear(ed, qk_d)
-        self.Wk = nn.Linear(ed, qk_d)
-        self.Wv = nn.Linear(ed, v_d)
+        self.Wq = nn.Linear(ed, qk_d,bias=False)
+        self.Wk = nn.Linear(ed, qk_d,bias=False)
+        self.Wv = nn.Linear(ed, v_d,bias=False)
 
     def forward(self,input):
         B,T,C = input.shape
@@ -137,7 +165,7 @@ class Head(nn.Module):
         mask = torch.triu(torch.full((T, T), float('-inf'), device=input.device), diagonal=1)
 
 
-        QK = (Q @ K.transpose(-2,-1)) / (qk_d**0.5)
+        QK = (Q @ K.transpose(-2,-1)) / (Q.shape[-1]**0.5)
         QK += mask
         att = nn.functional.softmax(QK,dim=-1)
         attv= att @ V
@@ -217,15 +245,6 @@ def train_network(
         loss.backward()
         optimizer.step()
      
-        if step == number_iter-1 or step % checkpoint_interval == 0:
-            torch.save({
-                'epoch': step,
-                'model_state_dict': microgpt.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-            }, MODEL_FILE)
-          
-            with open(f"{LOSS_HISTORY_FILE}", "w") as f:
-                json.dump(loss_history, f)
 
         if step % tracking_interval == 0:
             losses = estimate_loss(microgpt)
@@ -237,6 +256,15 @@ def train_network(
                 f"train_loss={losses["train"]:.4f}  "
                 f"test_loss={losses["val"]:.4f}"
             )
+        if step == number_iter or step % checkpoint_interval == 0:
+            torch.save({
+                'epoch': step,
+                'model_state_dict': microgpt.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+            }, MODEL_FILE)
+          
+            with open(f"{LOSS_HISTORY_FILE}", "w") as f:
+                json.dump(loss_history, f)
 
         if step % sample_interval == 0:
             
