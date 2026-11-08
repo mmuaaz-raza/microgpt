@@ -59,15 +59,12 @@ tinygpt = Transformer(
 def train_network(
     number_iter: int,
     decay_rate: float,
-    checkpoint_rate: float,
-    tracking_rate: float,
+    checkpoint_interval: float,
+    tracking_interval: float,
     base_alpha: float,
     warmup_steps: int = 500,
-    sample_rate :float =0
+    sample_interval:float =0
 ) -> None:
-    log_every        = max(1, int(number_iter * tracking_rate))
-    checkpoint_every = max(1, int(number_iter * checkpoint_rate))
-    sample_every = max(1,int(number_iter*sample_rate))
 
     for step in range(tinygpt.epoch, number_iter + 1):
         if step < warmup_steps:
@@ -85,12 +82,12 @@ def train_network(
 
         tinygpt.updateWeightsAdam(alpha, batch_size, step, beta1, beta2)
 
-        if step == number_iter or step % checkpoint_every == 0:
+        if step == number_iter or step % checkpoint_interval == 0:
             tinygpt.save(step)
             with open(f"{LOSS_HISTORY_FILE}", "w") as f:
                 json.dump(loss_history, f)
 
-        if step % log_every == 0:
+        if step % tracking_interval == 0:
             train_loss = tinygpt.calculateBatchLoss(x, y)
 
             tx, ty = get_target_labels(
@@ -108,16 +105,16 @@ def train_network(
                 f"test_loss={test_loss:.4f}"
             )
             
-        if step% sample_every ==0:
+        if step% sample_interval ==0:
             generate(tinygpt,True,False,f"{OUTPUT_FILE}{step}.txt")
 
 
 train_network(
-    number_iter=4000,
+    number_iter=5000,
     decay_rate=1e-3,
-    checkpoint_rate=0.05,
-    tracking_rate=0.01,
-    base_alpha=0.001,
+    checkpoint_interval=50,
+    tracking_interval=100,
+    base_alpha=1e-3,
     warmup_steps=500,
-    sample_rate = 0.20
+    sample_interval=1000,
 )
