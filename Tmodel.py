@@ -41,19 +41,19 @@ class FFNParams:
         L, E, F = dimensions.layers, dimensions.ed, dimensions.ffn_wd
 
         if allzero:
-            self.gama = np.zeros((L, E))
-            self.beta = np.zeros((L, E))
-            self.W0   = np.zeros((L, E, F))
-            self.B0   = np.zeros((L, 1, F))
-            self.W1   = np.zeros((L, F, E))
-            self.B1   = np.zeros((L, 1, E))
+            self.gama = np.zeros((L, E),dtype=np.float32)
+            self.beta = np.zeros((L, E),dtype=np.float32)
+            self.W0   = np.zeros((L, E, F),dtype=np.float32)
+            self.B0   = np.zeros((L, 1, F),dtype=np.float32)
+            self.W1   = np.zeros((L, F, E),dtype=np.float32)
+            self.B1   = np.zeros((L, 1, E),dtype=np.float32)
         else:
-            self.gama = np.ones((L, E))
-            self.beta = np.zeros((L, E))
-            self.W0   = rng.standard_normal((L, E, F)) * (2 / E) ** 0.5
-            self.B0   = np.zeros((L, 1, F))
-            self.W1   = rng.standard_normal((L, F, E)) * (2 / F) ** 0.5
-            self.B1   = np.zeros((L, 1, E))
+            self.gama = np.ones((L, E) ,dtype=np.float32)
+            self.beta = np.zeros((L, E),dtype=np.float32)
+            self.W0   = rng.standard_normal((L, E, F),dtype=np.float32) * (2 / E) ** 0.5
+            self.B0 = np.zeros((L, 1, F), dtype=np.float32)
+            self.W1   = rng.standard_normal((L, F, E),dtype=np.float32) * (2 / F) ** 0.5
+            self.B1 = np.zeros((L, 1, E), dtype=np.float32)
 
 
 @dataclass
@@ -71,24 +71,24 @@ class AttentionParams:
     beta: np.ndarray = field(init=False)
 
     def __post_init__(self, dimensions: ModelDimensions, allzero: bool = False):
-        rng = np.random.default_rng(56)
+        rng = np.random.default_rng(57)
         L, H = dimensions.layers, dimensions.heads
         E, QK, V = dimensions.ed, dimensions.qk_d, dimensions.v_d
 
         if allzero:
-            self.gama = np.zeros((L, E))
-            self.beta = np.zeros((L, E))
-            self.Wq   = np.zeros((L, H, E, QK))
-            self.Wk   = np.zeros((L, H, E, QK))
-            self.Wv   = np.zeros((L, H, E, V))
-            self.Wp   = np.zeros((L, V * H, E))
+            self.gama = np.zeros((L, E),dtype=np.float32)
+            self.beta = np.zeros((L, E),dtype=np.float32)
+            self.Wq   = np.zeros((L, H, E, QK),dtype=np.float32)
+            self.Wk   = np.zeros((L, H, E, QK),dtype=np.float32)
+            self.Wv = np.zeros((L, H, E, V), dtype=np.float32)
+            self.Wp = np.zeros((L, V * H, E), dtype=np.float32)
         else:
-            self.gama = np.ones((L, E))
-            self.beta = np.zeros((L, E))
-            self.Wq   = rng.standard_normal((L, H, E, QK)) * (1 / (E/H) ** 0.5)
-            self.Wk   = rng.standard_normal((L, H, E, QK)) * (1 / (E/H) ** 0.5)
-            self.Wv   = rng.standard_normal((L, H, E, V))  * (1 / (E/H) ** 0.5)
-            self.Wp   = rng.standard_normal((L, V * H, E)) * (1 / (V*H) ** 0.5)
+            self.gama = np.ones((L, E),dtype=np.float32)
+            self.beta = np.zeros((L, E),dtype=np.float32)
+            self.Wq   = rng.standard_normal((L, H, E, QK),dtype=np.float32) * (1 / (E/H) ** 0.5)
+            self.Wk   = rng.standard_normal((L, H, E, QK),dtype=np.float32) * (1 / (E/H) ** 0.5)
+            self.Wv   = rng.standard_normal((L, H, E, V),dtype=np.float32)  * (1 / (E/H) ** 0.5)
+            self.Wp   = rng.standard_normal((L, V * H, E),dtype=np.float32) * (1 / (V*H) ** 0.5)
 
 
 @dataclass
@@ -106,14 +106,14 @@ class FinalBlockParams:
         E, V = dimensions.ed, dimensions.vocab_size
 
         if allzero:
-            self.Wu   = np.zeros((E, V))
-            self.gama = np.zeros((1, E))
-            self.beta = np.zeros((1, E))
+            self.Wu   = np.zeros((E, V),dtype=np.float32)
+            self.gama = np.zeros((1, E),dtype=np.float32)
+            self.beta = np.zeros((1, E),dtype=np.float32)
         else:
             rng = np.random.default_rng(56)
-            self.Wu   = rng.standard_normal((E, V)) / E ** 0.5
-            self.gama = np.ones((1, E))
-            self.beta = np.zeros((1, E))
+            self.Wu   = rng.standard_normal((E, V),dtype=np.float32) / E ** 0.5
+            self.gama = np.ones((1, E),dtype=np.float32)
+            self.beta = np.zeros((1, E), dtype=np.float32)
 
 
 @dataclass
@@ -132,10 +132,11 @@ class ModelTrainableParams:
 
         rng = np.random.default_rng(56)
         if allzero:
-            self.w_emb = np.zeros((dimensions.vocab_size, dimensions.ed))
+            self.w_emb = np.zeros((dimensions.vocab_size, dimensions.ed),dtype=np.float32)
         else:
             self.w_emb = (
-                rng.standard_normal((dimensions.vocab_size, dimensions.ed))
+                rng.standard_normal(
+                    (dimensions.vocab_size, dimensions.ed), dtype=np.float32)
                 * (1 / dimensions.ed ** 0.5)
             )
 

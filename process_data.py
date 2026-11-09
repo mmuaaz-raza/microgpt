@@ -7,6 +7,7 @@ functions (softmax, layer-norm, ReLU, GELU) used throughout the model.
 
 import numpy as np
 
+
 # wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
 DATA_FILE = "data/input.txt"
 
@@ -44,12 +45,11 @@ def load_essentials():
     return train_set, test_set, itos, stoi, encode, decode
 
 
-def get_target_labels(block_size: int, data: np.ndarray, batch_size: int):
+def get_target_labels(block_size: int, data: np.ndarray, batch_size: int,rng):
     """
     Sample a random mini-batch.
     x = data[i:i+block_size],  y = data[i+1:i+block_size+1]  (next-token targets).
     """
-    rng     = np.random.default_rng()
     indices = rng.integers(low=0, high=len(data) - block_size - 1, size=batch_size)
     x = np.stack([data[i     : i + block_size    ] for i in indices])
     y = np.stack([data[i + 1 : i + block_size + 1] for i in indices])

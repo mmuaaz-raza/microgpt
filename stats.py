@@ -8,12 +8,12 @@ import os
 import json
 import matplotlib.pyplot as plt
 
-DEFAULT_FILES = ["history/shPlainnp.json"]
-OUTPUT_IMAGE_FILE = "history/loss_curve_shPlainnp.png"
+DEFAULT_FILES = ["history/shP03.json"]
+OUTPUT_IMAGE_FILE = "history/loss_curve_shP03PyTorch.png"
 
 
-def plot_losses(filename: str = None) -> None:
-    if filename is None:
+def plot_losses(filename: str = "") -> None:
+    if filename == "":
         for f in DEFAULT_FILES:
             if os.path.exists(f):
                 filename = f

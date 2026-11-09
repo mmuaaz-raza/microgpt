@@ -46,6 +46,8 @@ class Transformer:
                 self.adamParamsV = copy.deepcopy(saved["adamParamsV"])
                 self.dimensions  = copy.deepcopy(saved["dimensions"])
                 self.epoch     = saved["epoch"]
+
+                
             print(f"Model loaded from '{filename}'.")
             return True
         return False
@@ -60,7 +62,7 @@ class Transformer:
         ffn_wd: int,
         seq_len: int,
         dropout_rate:float,
-        seed:int = 53,
+        seed:int = 57,
         ModelFileName: str = None,  # type: ignore
     ) -> None:
         (
@@ -77,6 +79,12 @@ class Transformer:
         self.dropout_rate = dropout_rate
         self.modelFileName = ModelFileName
         self.rng = np.random.default_rng(seed)
+
+        self.mask = np.tril(np.ones((block_size, block_size),dtype=np.float32))
+        self.mask[self.mask == 0] = -np.inf
+        self.mask[self.mask == 1] = 0.0
+                        
+
         is_saved = self.load_model(ModelFileName)
 
         if not is_saved:
@@ -108,8 +116,8 @@ class Transformer:
 
     def positional_encoding(self, x: np.ndarray) -> np.ndarray:
         seq_len, d_model = x.shape
-        encoded   = np.zeros((seq_len, d_model))
-        divisor   = 10000 ** (np.arange(0, d_model, 2) / d_model)
+        encoded = np.zeros((seq_len, d_model), dtype=np.float32)
+        divisor   = 10000 ** (np.arange(0, d_model, 2,dtype=np.float32) / d_model)
         positions = np.arange(seq_len)[:, np.newaxis]
 
         encoded[:, 0::2] = np.sin(positions / divisor)
@@ -138,9 +146,7 @@ class Transformer:
 
         # Causal mask: prevent attending to future tokens
         seq_len = Xin.shape[0]
-        mask = np.tril(np.ones((seq_len, seq_len)))
-        mask[mask == 0] = -np.inf
-        mask[mask == 1] = 0.0
+     
 
         Q = Xn1 @ self.params.attention.Wq[layer]
         K = Xn1 @ self.params.attention.Wk[layer]
@@ -148,7 +154,7 @@ class Transformer:
 
         QK  = Q @ np.transpose(K, axes=(0, 2, 1))
         QK /= self.dimensions.qk_d ** 0.5
-        QK += mask
+        QK += self.mask
         att  = softmax(QK)
         attv = att @ V
 
@@ -247,12 +253,6 @@ class Transformer:
             [np.log(probs[i, y_trunc[i]] + 1e-9) for i in range(probs.shape[0])]
         )
 
-    def calculateBatchLoss(self, x: np.ndarray, y: np.ndarray) -> float:
-        total_loss = sum(
-            self.loss_calculation(self.forward(inp,dropout=False), out)
-            for inp, out in zip(x, y)
-        )
-        return total_loss / batch_size
 
     def layernormGrad(
         self,
@@ -307,7 +307,7 @@ class Transformer:
             dXlf, t.final, self.params.final, 0, self.gradients.final
         )
 
-        dXp = np.zeros_like(t.init.Xp)
+        dXp = np.zeros_like(t.init.Xp, dtype=np.float32)
 
         # Backpropagation through Transformer blocks in reverse
         for layer in range(self.dimensions.layers - 1, -1, -1):
@@ -378,7 +378,7 @@ class Transformer:
             )
         if dropout:
             dXp = dXp* self.dropout_masks.Xp
-        dEmbd = np.zeros_like(self.params.w_emb)
+        dEmbd = np.zeros_like(self.params.w_emb, dtype=np.float32)
         np.add.at(dEmbd, self.forward_runtime.init.input, dXp)
         self.gradients.w_emb += dEmbd
 

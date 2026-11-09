@@ -4,11 +4,13 @@ train.py
 Training loop for the MicroGPT character-level language model using Adam with
 linear warmup and inverse-time decay.
 """
+
 import json
 from pathlib import Path
 from sample import generate
 import json
 import os
+import numpy as np
 from model import (
     Transformer,
     block_size,
@@ -23,6 +25,7 @@ from model import (
     qk_d,
     v_d,
 )
+
 from process_data import get_target_labels
 
 LOSS_HISTORY_FILE = input("Loss history file name  : ")
@@ -52,8 +55,23 @@ tinygpt = Transformer(
     ffn_wd=ffn_wd,
     ModelFileName=modelFilename,
     dropout_rate=0,
+    seed=57
 )
 
+
+def calculateBatchLoss(model:Transformer) :
+        out = {}
+        for split in ['train', 'val']:
+            losses = np.zeros(20, dtype=np.float32)
+            for k in range(20):
+                X, Y = get_target_labels(
+                    block_size, model.train_set if split == "train" else model.test_set, batch_size, model.rng)
+                losses[k]= np.mean([model.loss_calculation(model.forward(inp,dropout=False), out)
+                            for inp, out in zip(X, Y)])
+                
+            out[split] = losses.mean().tolist()
+        
+        return out
 
 
 def train_network(
@@ -76,44 +94,39 @@ def train_network(
             batch_size=batch_size,
             data=tinygpt.train_set,
             block_size=block_size,
+            rng=tinygpt.rng
         )
         for inp, out in zip(x, y):
             tinygpt.backward(inp, out)
 
         tinygpt.updateWeightsAdam(alpha, batch_size, step, beta1, beta2)
 
+
+        if step % tracking_interval == 0:
+            losses = calculateBatchLoss(tinygpt)
+
+            loss_history.append((step, losses["train"], losses["val"]))
+            print(
+                f"step {step}/{number_iter}  "
+                f"lr={alpha:.6f}  "
+                f"train_loss={losses["train"]:.4f}  "
+                f"test_loss={losses["val"]:.4f}"
+            )
+            
         if step == number_iter or step % checkpoint_interval == 0:
             tinygpt.save(step)
             with open(f"{LOSS_HISTORY_FILE}", "w") as f:
                 json.dump(loss_history, f)
-
-        if step % tracking_interval == 0:
-            train_loss = tinygpt.calculateBatchLoss(x, y)
-
-            tx, ty = get_target_labels(
-                batch_size=batch_size,
-                data=tinygpt.test_set,
-                block_size=block_size,
-            )
-            test_loss = tinygpt.calculateBatchLoss(tx, ty)
-
-            loss_history.append((step, train_loss, test_loss))
-            print(
-                f"step {step}/{number_iter}  "
-                f"lr={alpha:.6f}  "
-                f"train_loss={train_loss:.4f}  "
-                f"test_loss={test_loss:.4f}"
-            )
-            
+        
         if step% sample_interval ==0:
             generate(tinygpt,True,False,f"{OUTPUT_FILE}{step}.txt")
 
 
 train_network(
-    number_iter=5000,
+    number_iter=1,
     decay_rate=1e-3,
-    checkpoint_interval=50,
-    tracking_interval=100,
+    checkpoint_interval=200,
+    tracking_interval=1,
     base_alpha=1e-3,
     warmup_steps=500,
     sample_interval=1000,

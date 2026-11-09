@@ -21,6 +21,7 @@ layers = 4
 ffn_wd = 4 * ed
 dropout= 0.3
 lr = 1e-3
+rng = np.random.default_rng(57)
 
 FILE_NAME = input("model/history file name : ")
 MODEL_FILE = "models/"+FILE_NAME+".pth"
@@ -177,7 +178,7 @@ class FFN(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
         nn.Linear(ed, ffn_wd, bias=True),
-        nn.GELU(),
+        nn.GELU(approximate="tanh"),
         nn.Linear(ffn_wd,ed, bias=True),
         nn.Dropout(dropout)
         )
@@ -189,9 +190,9 @@ def estimate_loss(microgpt:Transformer):
     out = {}
     microgpt.eval() # toggling to evaluation
     for split in ['train', 'val']:
-        losses = torch.zeros(200)
-        for k in range(200):
-            X,Y = get_target_labels(block_size, trainset if split =="train" else testset, batch_size)
+        losses = torch.zeros(20)
+        for k in range(20):
+            X,Y = get_target_labels(block_size, trainset if split =="train" else testset, batch_size,rng)
             logits, loss = microgpt(X, Y)
             losses[k] = loss.item()
         out[split] = losses.mean().tolist()
@@ -239,7 +240,7 @@ def train_network(
         for param_group in optimizer.param_groups:
             param_group['lr'] = alpha
         
-        x,y = get_target_labels(block_size,trainset,batch_size)
+        x,y = get_target_labels(block_size,trainset,batch_size,rng)
         _ , loss = microgpt(x,y)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
